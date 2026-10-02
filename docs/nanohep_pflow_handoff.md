@@ -273,9 +273,49 @@ same metric. Every run includes this output-tokenizer floor; report it alongside
 
 ## 8. Deliverables
 
-A table: config (positions-in/out, K, Q=4, bits per element = 4*log2 K, +30 for positions-out) |
+A table: config (positions-in/out, K, Q=4, bits per element = 4*log2 K, +30 for positions-out;
+and the continuous baseline of section 9) |
 steps | val loss | test IQR/median +- err | median response | mean multiplicity (pred/true) |
 token accuracy | run dir. Plus the floor from 7c and the store event counts from 4.
+
+---
+
+## 9. Continuous-input baseline
+
+The reference for "what does tokenizing the inputs cost": the same nanoHEP, recipe, data and
+tokenized truth-particle output, but tracks and topos enter as their raw (scaled) features. nanoHEP
+only consumes token IDs, so this needs a small model change. Do it after one token config has
+trained and evaluated end to end.
+
+1. **Store:** for one store (any K; only its offsets/event order are used), add
+   `{track,topo}_cont.npy` = headerless float32 `[n_rows, F]` with the **scaled** features in exactly
+   the row order of `{mod}_data.npy`, plus `{mod}_cont_meta.npz` (`n_rows`, `n_feat`).
+   Use the **positions-in** feature lists and scalers (tracks F=5, topos F=8, including eta/phi).
+   `scripts/build_hep4m_preprocessed.py --cont_only` already does this next to an existing export
+   (it asserts identical offsets and event numbers); apply the same path, streaming and sort-order
+   changes as in 4.2.
+2. **Sequence:** each input element becomes **one** slot holding a new special token
+   `<ELEM:track>` / `<ELEM:topo>` (add them to `Vocab`); the interleaving, header and outputs are
+   unchanged. The max length drops to 2 + 1 + 65 + 1 + 48 + 1 = 118.
+   `TokenizedMemmapDataset` additionally returns `cont` `[block_size, F_max]` (zero-padded, F_max=8)
+   aligned with the slots; the collate stacks it.
+3. **Model:** per input modality an MLP `Linear(F, n_embd) -> GELU -> Linear(n_embd, n_embd)`.
+   In `GPT.forward` / `forward_hidden`, after `x = wte(idx)`, replace `x` at `<ELEM:m>` positions
+   with `MLP_m(cont[..., :F_m])` (then add `wpe` as usual). Keep the MLP in fp32 (disable autocast
+   for it) so the inputs aren't rounded to bf16. Loss and loss mask are unchanged (inputs carry no loss).
+4. **Generation:** `hep4m/models/nano_hep/decode.py::batched_ar_decode` prefills the prompt once
+   (`model(cur, return_kv_list=True)`) and then steps with the KV cache, so `cont` is needed only for
+   the prefill; generated positions are always ordinary tokens. Its no-cache fallback re-runs
+   `model(cur)` on the whole sequence each step: there, pass `cont` (zero-padded to the current
+   length) on every call, or force the cached path.
+5. **Checks:** a slot's MLP output changes when its features change and nowhere else; a 50-step tiny
+   run trains; parameter count = token run minus the track/topo rows of the embedding table plus
+   the two MLPs (report both counts).
+6. Train with the identical recipe and model size, evaluate exactly as in section 7 (same test
+   split, same truth-particle decoding, both cardinality modes), and add it as a row in the table.
+
+S3DF reference (HEP4M, true multiplicity): continuous 0.1285 vs best token input 0.1328, so the
+expected gap is a few percent; a much larger gap points to a bug in the continuous path.
 
 ## Reference (S3DF, HEP4M 4M model, 20M training events, 99,840 val events, true multiplicity)
 
