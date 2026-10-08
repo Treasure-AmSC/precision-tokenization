@@ -41,6 +41,7 @@ from pathlib import Path
 import h5py
 import hydra.utils as hu
 import matplotlib.pyplot as plt
+import mplhep as hep
 import numpy as np
 import torch as T
 from matplotlib.lines import Line2D
@@ -50,6 +51,8 @@ from sklearn.metrics import auc, roc_curve
 # Register custom OmegaConf resolvers (int_div, min, max, if, …) used in saved configs
 import heptokens.utils.hydra as _qhep_hydra  # noqa: F401  (side-effect import)
 from heptokens.utils.hydra import reload_original_config
+
+plt.style.use(hep.style.CMS)
 
 log = logging.getLogger(__name__)
 
@@ -320,8 +323,8 @@ LINE_STYLES = [
 
 # Explicit translations for run labels that don't follow the "cbK_nqQ" pattern
 _EXPLICIT_RUN_LABELS = {
-    "token_clf_full_v2": r"($K=2^{15}$, $Q=4$)",
-    "feature_clf_full_v3": "continuous features",
+    "token_clf_full_v2": r"60 bits ($K=2^{15}$, $Q=4$)",
+    "feature_clf_full_v3": "continuous (640 bits)",
 }
 
 
@@ -393,7 +396,8 @@ def _pretty_run_label(label: str) -> str:
         k, q = int(m.group(1)), int(m.group(2))
         log2k = k.bit_length() - 1
         k_str = f"2^{{{log2k}}}" if 2 ** log2k == k else str(k)
-        return f"($K={k_str}$, $Q={q}$)"
+        bits = q * log2k
+        return f"{bits} bits ($K={k_str}$, $Q={q}$)"
     return label
 
 
@@ -423,7 +427,6 @@ def plot_comparison(
     run_labels = list(results.keys())
     style_map = _build_style_map(run_labels)
 
-    # plt.style.use(hep.style.CMS)
     fig, ax = plt.subplots(figsize=(8, 8))
 
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
@@ -437,7 +440,6 @@ def plot_comparison(
             y_score = probs[:, class_idx]
 
             fpr, tpr, _ = roc_curve(y_true, y_score)
-            roc_auc = auc(fpr, tpr)
 
             # HEP convention: signal efficiency (TPR) vs background rejection (1/FPR)
             with np.errstate(divide="ignore", invalid="ignore"):
@@ -473,7 +475,7 @@ def plot_comparison(
                label=_pretty_run_label(run_label))
         for run_label in run_labels
     ]
-    _two_column_legend(ax, color_handles, style_handles, "Flavor", "Model", fontsize=13)
+    _two_column_legend(ax, color_handles, style_handles, "Flavor", "Model", fontsize=17)
     # hep.cms.label(ax=ax, label="Simulation", data=False, fontsize=12)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -511,9 +513,14 @@ def _signal_eff_vs_misid(
     if len(sig_scores) == 0 or len(bkg_scores) == 0:
         return np.array([]), np.array([])
 
+    # Vectorized over all thresholds: fraction of scores >= t equals
+    # (n - searchsorted(sorted_scores, t)) / n. O((n+m) log n) instead of the
+    # O(n*m) that a per-threshold comparison loop would cost.
+    sig_sorted = np.sort(sig_scores)
+    bkg_sorted = np.sort(bkg_scores)
     thresholds = np.linspace(0, 1, n_points)
-    sig_eff = np.array([(sig_scores >= t).mean() for t in thresholds])
-    bkg_misid = np.array([(bkg_scores >= t).mean() for t in thresholds])
+    sig_eff = (len(sig_sorted) - np.searchsorted(sig_sorted, thresholds, side="left")) / len(sig_sorted)
+    bkg_misid = (len(bkg_sorted) - np.searchsorted(bkg_sorted, thresholds, side="left")) / len(bkg_sorted)
     return sig_eff, bkg_misid
 
 
@@ -567,13 +574,6 @@ def plot_btag_roc(
             if len(sig_eff) == 0:
                 continue
 
-            # Binary AUC for this (signal, background) pair
-            mask = (labels == signal_idx) | (labels == bkg_idx)
-            y_true = (labels[mask] == signal_idx).astype(int)
-            y_score = probs[mask, signal_idx]
-            fpr_b, tpr_b, _ = roc_curve(y_true, y_score)
-            roc_auc = auc(fpr_b, tpr_b)
-
             with np.errstate(divide="ignore", invalid="ignore"):
                 rejection = np.where(bkg_misid > 0, 1.0 / bkg_misid, np.nan)
 
@@ -590,7 +590,7 @@ def plot_btag_roc(
     sig_name = class_names.get(signal_idx, signal_class)
     ax.set_xlabel(f"{sig_name}-jet Efficiency", fontsize=27, loc="right")
     ax.set_ylabel("Background Rejection", fontsize=27, loc="top")
-    ax.tick_params(axis="both", which="major", labelsize=15)
+    ax.tick_params(axis="both", which="major", labelsize=22)
     ax.set_yscale("log")
     ax.set_xlim([0.5, 1.0])
     ax.set_ylim([1, 6e5])
@@ -608,7 +608,7 @@ def plot_btag_roc(
                label=_pretty_run_label(run_label))
         for run_label in run_labels
     ]
-    _two_column_legend(ax, color_handles, style_handles, "Bkg", "Model", fontsize=13)
+    _two_column_legend(ax, color_handles, style_handles, "Background", "Model", fontsize=17)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, bbox_inches="tight")

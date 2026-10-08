@@ -9,9 +9,9 @@ retrains (tracks_e50/) replace the original Q = 3 runs.
   (a) resolution vs Q at the reference (K, d); COCOA tracks up to Q = 4
   (b) resolution vs log2 K at the reference (d, Q)
   (c) d of the Pareto-optimal configuration vs bits per element (Q log2 K)
-  (d) positions in (solid) vs positions out (dashed, hollow) vs bits per element (Q log2 K; the
-      fixed global position binning adds 20 bits per element for positions out, stated in the text),
-      best d at each K, Q = 4
+  (d) positions in (solid) vs positions out (dashed, hollow) vs total bits per element: Q log2 K, plus
+      for positions out the fixed global position binning (pos_bits: 10 bits per coordinate,
+      20 for JetSet (deta, dphi), 30 for COCOA (eta, cos phi, sin phi)); best d at each K, Q = 4
 
 Where several seeds exist for one configuration the mean is plotted with a min-max error bar.
 JetSet d = 2 is excluded from the main figures and shown (marked) in the appendix d-crossing plot.
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
 import re
 from pathlib import Path
 
@@ -37,14 +38,14 @@ RES = REPO / "results"
 
 MODALITIES = {
     "JetSet": dict(
-        color="#1f77b4", D=20, pos_idx=[1, 2], ref=(32768, 8, 4), selected=(32768, 8, 4), slug="jetset",
+        color="#1f77b4", D=20, pos_idx=[1, 2], pos_bits=20, ref=(32768, 8, 4), selected=(32768, 8, 4), slug="jetset",
         posout_grid=([8192, 16384, 32768], [4, 8, 16]),
         dirs=[RES / "vqvae_scan/vqvae_scan"],
         rx=r"^transformer_vqvae_enc_large_cb(\d+)_cd(\d+)_nq(\d+)_lr0\.0003_cw1\.0_nj10000000"
            r"(?:_(posout)|_seed(\d+))?$",
     ),
     "COCOA tracks": dict(
-        color="#ff7f0e", D=5, pos_idx=[1, 2], ref=(4096, 4, 4), selected=(4096, 8, 3), slug="tracks",
+        color="#ff7f0e", D=5, pos_idx=[1, 2], pos_bits=30, ref=(4096, 4, 4), selected=(4096, 8, 3), slug="tracks",
         q_max_a=4,  # Q = 6, 8 runs early-stopped at worse loss than Q = 4
         posout_grid=([256, 1024, 4096], [4, 8]),  # positions-out d = 2 reconstructs z0 as a constant
         dirs=[RES / "cocoa_scan/tracks", RES / "cocoa_scan/tracks_posout", RES / "cocoa_scan/tracks_e50"],
@@ -54,7 +55,7 @@ MODALITIES = {
                   rx=r"^cocoa_tracks(?:_(posout))?_cb(\d+)_cd(\d+)_nq(\d+)_lr0\.001(?:_seed(\d+))?(_e100)$"),
     ),
     "COCOA topoclusters": dict(
-        color="#2ca02c", D=8, pos_idx=[0, 1], ref=(4096, 8, 4), selected=(4096, 8, 6), slug="topos",
+        color="#2ca02c", D=8, pos_idx=[0, 1], pos_bits=30, ref=(4096, 8, 4), selected=(4096, 8, 6), slug="topos",
         posout_grid=([256, 1024, 4096], [4, 8, 12]),
         dirs=[RES / "cocoa_scan/topos", RES / "cocoa_scan/topos_posout", RES / "cocoa_scan/topos_seed"],
         rx=r"^cocoa_topos(?:_(posout))?_cb(\d+)_cd(\d+)_nq(\d+)_lr0\.001(?:_seed(\d+))?(_e50)?$",
@@ -64,6 +65,65 @@ MODALITIES = {
     ),
 }
 Q_VALUES = [2, 3, 4, 6, 8]
+
+# Calorimeter cells (Fig. 1 resolution only): jet energy IQR/median from each run's test_metrics.json,
+# same 100,096 test events; Large model, MSE alpha=0.4, all trained on 2M events.
+CELLS = dict(
+    color="#9467bd", D=64, slug="cells",
+    dir=Path("/fs/ddn/sdf/group/atlas/d/jkrupa/cocoa_results/cells_scan_2M_a0.4_frontier/transformer"),
+)
+
+
+def load_cells():
+    runs = {}
+    for run in sorted(CELLS["dir"].glob("cb*_cd*_nq*_a0.4_large")):
+        if not (run / "test_metrics.json").exists():
+            print(f"  cells: no test_metrics.json yet: {run.name}")
+            continue
+        m = json.loads((run / "test_metrics.json").read_text())
+        runs[(int(m["cb"]), int(m["cd"]), int(m["nq"]), "in")] = [float(m["energy_resolution_iqr"])]
+    return runs
+
+
+# Per-feature fixed uniform binning (scripts/binning_baseline.py, binning_baseline_cells.py): information fraction log2(K)/32
+BINNING_K_MIN = 16
+
+
+def load_binning(metric):
+    """{modality name: [(information fraction, metric value)]} from results/binning_baseline."""
+    out = {}
+    for name, spec in MODALITIES.items():
+        pts = []
+        for run in sorted((RES / "binning_baseline" / spec["slug"]).glob("binning_uniform_K*")):
+            K = int(run.name.rsplit("K", 1)[1])
+            npz = run / "test_metrics/test_metrics.npz"
+            if npz.exists() and K >= BINNING_K_MIN:
+                pts.append((np.log2(K) / 32, metric(npz)))
+        if pts:
+            out[name] = sorted(pts)
+    return out
+
+
+def load_cells_binning():
+    pts = []
+    for run in sorted((RES / "binning_baseline/cells").glob("binning_uniform_K*")):
+        if (run / "test_metrics.json").exists() and int(run.name.rsplit("K", 1)[1]) >= BINNING_K_MIN:
+            m = json.loads((run / "test_metrics.json").read_text())
+            pts.append((m["information_fraction"], m["energy_resolution_iqr"]))
+    return sorted(pts)
+
+
+def load_cells_mae():
+    """Pixel-energy normalized MAE (scripts/cells_pixel_mae.py): (VQ runs dict, binning [(x, y)])."""
+    runs, binning = {}, []
+    for f in sorted((RES / "cells_mae").glob("*/pixel_mae.json")):
+        m = json.loads(f.read_text())
+        if f.parent.name.startswith("binning_uniform_K"):
+            if m["cb"] >= BINNING_K_MIN:
+                binning.append((m["information_fraction"], m["normalized_mae"]))
+        else:
+            runs[(m["cb"], m["cd"], m["nq"], "in")] = [m["normalized_mae"]]
+    return runs, sorted(binning)
 
 
 def iqr_over_median(path):
@@ -147,7 +207,7 @@ def pareto(points):
 
 
 def main_figure(data, outdir, data_d=None, ylabel=r"Jet $p_T$ IQR / median", what="Resolution",
-                stem="design_rules", include_c=True, data_c=None, specs=None):
+                stem="design_rules", include_c=True, data_c=None, specs=None, d_legend_loc="lower left"):
     """data feeds (a), (b); data_c (default data) feeds (c); data_d (default data) feeds (d).
     Without (c) the panels are laid out in one row."""
     data_d = data if data_d is None else data_d
@@ -168,7 +228,7 @@ def main_figure(data, outdir, data_d=None, ylabel=r"Jet $p_T$ IQR / median", wha
 
         # (a) resolution vs Q
         qs = [Q for Q in Q_VALUES if (K0, d0, Q) in inn and Q <= spec.get("q_max_a", max(Q_VALUES))]
-        plot_series(ax_a, qs, [inn[(K0, d0, Q)] for Q in qs], col, label=f"{name} ({K0}, {d0})")
+        plot_series(ax_a, qs, [inn[(K0, d0, Q)] for Q in qs], col, label=name)
 
         # (b) resolution vs log2 K
         ks = sorted(K for (K, d, Q) in inn if d == d0 and Q == Q0)
@@ -190,11 +250,11 @@ def main_figure(data, outdir, data_d=None, ylabel=r"Jet $p_T$ IQR / median", wha
         inn_d = {k[:3]: v for k, v in data_d[name].items() if k[3] == "in"}
         out = {k[:3]: v for k, v in data_d[name].items() if k[3] == "out"}
         K_grid, d_grid = spec["posout_grid"]
-        for table, hollow, ls in ((inn_d, False, "-"), (out, True, "--")):
+        for table, hollow, ls, extra_bits in ((inn_d, False, "-", 0), (out, True, "--", spec["pos_bits"])):
             xs, vals = [], []
             for K in K_grid:
                 if all((K, d, 4) in table for d in d_grid):
-                    xs.append(4 * np.log2(K))
+                    xs.append(4 * np.log2(K) + extra_bits)
                     vals.append(min((table[(K, d, 4)] for d in d_grid), key=lambda v: central(v)[0]))
             plot_series(ax_d, xs, vals, col, hollow=hollow, ls=ls)
 
@@ -205,7 +265,8 @@ def main_figure(data, outdir, data_d=None, ylabel=r"Jet $p_T$ IQR / median", wha
     ax_a.set_xlabel(r"Number of quantizers $Q$")
     ax_a.set_xticks(Q_VALUES)
     ax_a.set_title(f"(a) {what} vs $Q$", loc="left", fontsize=12)
-    ax_a.legend(fontsize=8.5, loc="upper right", frameon=False)
+    fig.legend(*ax_a.get_legend_handles_labels(), loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=3,
+               fontsize=13, frameon=False)
     ax_b.set_xlabel(r"$\log_2 K$")
     ax_b.set_title(f"(b) {what} vs codebook size", loc="left", fontsize=12)
     if ax_c is not None:
@@ -216,12 +277,12 @@ def main_figure(data, outdir, data_d=None, ylabel=r"Jet $p_T$ IQR / median", wha
         ax_c.set_ylim(1.6, 20)
         ax_c.set_xlabel(r"Bits per element $Q\,\log_2 K$")
         ax_c.set_ylabel(r"Pareto-optimal $d^\ast$")
-        ax_c.set_title(r"(c) Optimal codebook dimension", loc="left", fontsize=12)
-    ax_d.set_xlabel(r"Bits per element $Q\,\log_2 K$")
+        ax_c.set_title(r"(c) Optimal codebook dimension for jet resolution", loc="left", fontsize=12)
+    ax_d.set_xlabel(r"Total bits per element (RVQ + positions)")
     ax_d.set_title("(d) Positions in vs out ($Q=4$)", loc="left", fontsize=12)
     ax_d.legend(handles=[plt.Line2D([], [], color="0.3", marker="o", ls="-", label="positions in"),
                          plt.Line2D([], [], color="0.3", marker="o", mfc="white", ls="--", label="positions out")],
-                fontsize=8.5, loc="upper right", frameon=False)
+                fontsize=13, loc=d_legend_loc, frameon=False)
     for ax in fig.axes:
         ax.tick_params(axis="both", which="both", direction="in", top=True, right=True, labelsize=10)
         ax.xaxis.label.set_size(11)
@@ -264,12 +325,15 @@ def d_crossing(data, outdir):
         save(fig, outdir, f"design_rules_d_crossing_{spec['slug']}")
 
 
-def fig1(data, outdir, ylabel=r"Jet $p_T$ IQR / median", stem="rate_distortion_pareto", goal=0.01):
-    """Rate-distortion Pareto (style of heptokens-cocoa scripts/plot_rate_distortion.py) from repo A."""
-    marker_by_d = {2: "v", 4: "o", 8: "s", 12: "^", 16: "^"}
+def fig1(data, outdir, ylabel=r"Jet $p_T$ IQR / median", stem="rate_distortion_pareto", goal=0.01, specs=None,
+         binning=None):
+    """Rate-distortion Pareto (style of heptokens-cocoa scripts/plot_rate_distortion.py) from repo A.
+    binning: optional {modality name: [(x, y)]} drawn as dashed per-feature binning curves."""
+    marker_by_d = {2: "v", 4: "o", 8: "s", 12: "^", 16: "^", 24: "D", 32: "D"}
+    ds_plotted = set()
     fig, ax = plt.subplots(figsize=(6.4, 6.4))
     all_pts = []
-    for name, spec in MODALITIES.items():
+    for name, spec in (MODALITIES if specs is None else specs).items():
         col = spec["color"]
         inn = {k[:3]: central(v)[0] for k, v in data[name].items() if k[3] == "in"}
         # Fig. 1 grid: JetSet without d = 2, topoclusters Q >= 4
@@ -279,25 +343,42 @@ def fig1(data, outdir, ylabel=r"Jet $p_T$ IQR / median", stem="rate_distortion_p
             inn = {k: v for k, v in inn.items() if k[2] >= 4}
         pts = [(Q * np.log2(K) / (32 * spec["D"]), y, (K, d, Q)) for (K, d, Q), y in inn.items()]
         all_pts += pts
+        ds_plotted |= {d for _, _, (_, d, _) in pts}
         for x, y, (K, d, Q) in pts:
             ax.scatter(x, y, marker=marker_by_d[d], s=44, facecolor=col, edgecolor="none", alpha=0.35, zorder=2)
         front = pareto(pts)  # fewer bits (smaller information fraction) and lower y are better
         ax.plot([p[0] for p in front], [p[1] for p in front], "-", color=col, lw=2.4, zorder=3, label=name)
+    for name, pts in (binning or {}).items():
+        col = (MODALITIES if specs is None else specs)[name]["color"]
+        ax.plot([p[0] for p in pts], [p[1] for p in pts], "--", marker="X", ms=9, color=col, lw=1.6, zorder=4)
+        all_pts += [(x, y, None) for x, y in pts]
     xmax = 0.4
     ys = np.array([p[1] for p in all_pts if p[0] <= xmax])
     ax.set_yscale("log")
     ax.set_xlim(0, xmax)
-    ax.set_ylim(ys.min() / 1.6, ys.max() * 1.6)
+    ax.set_ylim(ys.min() / (6 if binning else 1.6), ys.max() * (40 if binning else 1.6))  # room for legends
     if goal is not None:
         ax.axhline(goal, color="0.3", ls=":", lw=1.3, zorder=1)
         ax.text(0.62, goal, "1% resolution goal", color="0.3", fontsize=13, va="bottom", ha="left",
                 transform=ax.get_yaxis_transform())
-    leg = ax.legend(loc="upper right", frameon=True, framealpha=0.9, edgecolor="none", fontsize=15)
+    handles, labels = ax.get_legend_handles_labels()
+    if binning:
+        handles.append(plt.Line2D([], [], color="0.3", ls="--", marker="X", ms=9, lw=1.6))
+        labels.append("fixed binning (uniform)")
+    leg = ax.legend(handles, labels, loc="upper right", frameon=True, framealpha=0.9, edgecolor="none", fontsize=15)
     ax.add_artist(leg)
     shapes = [plt.Line2D([], [], marker=m, ms=10, mfc="0.4", mec="none", ls="none", label=l)
-              for m, l in (("v", "d = 2"), ("o", "d = 4"), ("s", "d = 8"), ("^", "d = 12/16"))]
-    ax.legend(handles=shapes, loc="lower left", frameon=True, framealpha=0.9,
-              edgecolor="none", fontsize=15, title="codebook dim.", title_fontsize=15)
+              for m, l in (("v", "d = 2"), ("o", "d = 4"), ("s", "d = 8"), ("^", "d = 12/16"))
+              + ((("D", "d = 24/32"),) if ds_plotted & {24, 32} else ())]
+    if binning:
+        short = [plt.Line2D([], [], marker=h.get_marker(), ms=9, mfc="0.4", mec="none", ls="none",
+                            label=h.get_label().removeprefix("d = ")) for h in shapes]
+        ax.legend(handles=short, loc="lower center", ncol=len(short), frameon=True, framealpha=0.9,
+                  edgecolor="none", fontsize=13, title="codebook dim. d", title_fontsize=13, handletextpad=0.1,
+                  columnspacing=1.0)
+    else:
+        ax.legend(handles=shapes, loc="lower left", frameon=True, framealpha=0.9,
+                  edgecolor="none", fontsize=15, title="codebook dim.", title_fontsize=15)
     ax.set_ylabel(ylabel, fontsize=20)
     ax.set_xlabel(r"Information fraction  ($Q\,\log_2 K \,/\, 32\,D$)", fontsize=20)
     ax.tick_params(axis="both", which="both", direction="in", top=True, right=True, labelsize=16)
@@ -334,17 +415,33 @@ def main():
     main_figure(swap(data), args.outdir, data_c=data, specs=specs)
     d_crossing(data, args.outdir)
     fig1(data, args.outdir)
+    cells_name = "COCOA cells (jet energy)"
+    fig1({**data, cells_name: load_cells()}, args.outdir, stem="rate_distortion_pareto_with_cells",
+         specs={**MODALITIES, cells_name: CELLS})
+    fig1({**data, cells_name: load_cells()}, args.outdir, stem="rate_distortion_pareto_with_cells_binning",
+         specs={**MODALITIES, cells_name: CELLS},
+         binning={**load_binning(iqr_over_median), cells_name: load_cells_binning()})
     mae = {name: load(spec, normalized_mae) for name, spec in MODALITIES.items()}
     agg = lambda src, f: {n: {k: [f(v) for v in vs] for k, vs in r.items()} for n, r in src.items()}  # noqa: E731
     for f, what, stem in ((np.mean, "mean over features", "mean"), (np.max, "worst feature", "worst")):
         fig1(agg(mae, f), args.outdir, ylabel=f"Normalized MAE ({what})", stem=f"rate_distortion_pareto_mae_{stem}",
              goal=None)
+    fig1(data, args.outdir, stem="rate_distortion_pareto_with_binning", binning=load_binning(iqr_over_median))
+    fig1(agg(mae, np.mean), args.outdir, ylabel="Normalized MAE (mean over features)", goal=None,
+         stem="rate_distortion_pareto_mae_mean_with_binning",
+         binning=load_binning(lambda f: float(np.mean(normalized_mae(f)))))
+    cells_mae, cells_mae_bin = load_cells_mae()
+    cells_mae_name = "COCOA cells (pixel energy)"
+    fig1({**agg(mae, np.mean), cells_mae_name: cells_mae}, args.outdir, ylabel="Normalized MAE (mean over features)",
+         goal=None, stem="rate_distortion_pareto_mae_mean_with_cells_binning",
+         specs={**MODALITIES, cells_mae_name: CELLS},
+         binning={**load_binning(lambda f: float(np.mean(normalized_mae(f)))), cells_mae_name: cells_mae_bin})
     mae_abd = swap(mae, normalized_mae)
     # (d) compares only the features both sides tokenize: positions-in drops its position columns
     mae_d = {n: {k: [np.delete(v, MODALITIES[n]["pos_idx"]).mean() if k[3] == "in" else v.mean() for v in vs]
                  for k, vs in r.items()} for n, r in mae_abd.items()}
     main_figure(agg(mae_abd, np.mean), args.outdir, data_d=mae_d, ylabel="Normalized MAE (feature mean)",
-                what="MAE", stem="design_rules_mae", include_c=False, specs=specs)
+                what="MAE", stem="design_rules_mae", include_c=False, specs=specs, d_legend_loc="upper right")
 
 
 if __name__ == "__main__":

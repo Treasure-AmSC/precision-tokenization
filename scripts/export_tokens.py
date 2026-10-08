@@ -20,9 +20,18 @@ Output npz contains:
     labels      : [N]                            int8
     codebooks   : [num_quantizers, codebook_size, codebook_dim]  float32
     eventNumber : [N]                            int64
+  positions-out models only (datamodule.position_features set; pos_tokenizer required):
+    pos_indices : [N, num_csts, n_pos]           int16  (-1 = masked), PositionTokenizer bins
+    pos_ranges  : [n_pos, 2]                     float32 (min, max) per position feature
+    pos_n_bins  : [n_pos]                        int32
+
+COCOA (tracks/topos, ROOT input) uses configs/tokenize_cocoa.yaml and tokenizes datamodule.test_dir:
+    pixi run python scripts/export_tokens.py --config-name tokenize_cocoa \
+        datamodule=cocoa_topos ckpt_path=... output_dir=...
 
 Reconstruction:
     z_q[i, j, :] = sum over q of codebooks[q, indices[i, j, q], :]
+    position[i, j, f] = pos_ranges[f, 0] + (pos_indices[i, j, f] + 0.5) * (pos_ranges[f, 1] - pos_ranges[f, 0]) / pos_n_bins[f]
 """
 
 import logging
@@ -34,9 +43,11 @@ import hydra
 import numpy as np
 import torch
 import h5py
+import uproot
 from lightning.pytorch.callbacks import BasePredictionWriter
 from omegaconf import DictConfig
 
+from heptokens.data.cocoa_base import TREE_NAME, root_files_from_dir
 from heptokens.models.vq_vae import LitVqVae
 
 log = logging.getLogger(__name__)
@@ -52,17 +63,19 @@ def extract_codebooks(model: LitVqVae) -> np.ndarray:
 class MemmapPredictionWriter(BasePredictionWriter):
     """Write predictions to memory-mapped files batch-by-batch."""
 
-    def __init__(self, tmp_dir: str, total_jets: int, num_csts: int, num_quantizers: int):
+    def __init__(self, tmp_dir: str, total_jets: int, num_csts: int, num_quantizers: int, pos_tokenizer=None):
         super().__init__(write_interval="batch")
         self.tmp_dir = Path(tmp_dir)
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         self.total_jets = total_jets
         self.pos = 0  # current write position
+        self.pos_tokenizer = pos_tokenizer
 
         # Pre-allocate memory-mapped output arrays
         self.indices_path = self.tmp_dir / "indices.npy"
         self.labels_path = self.tmp_dir / "labels.npy"
         self.events_path = self.tmp_dir / "eventNumber.npy"
+        self.pos_path = self.tmp_dir / "pos_indices.npy"
 
         self.indices_mmap = np.lib.format.open_memmap(
             str(self.indices_path), mode="w+", dtype=np.int16,
@@ -76,6 +89,12 @@ class MemmapPredictionWriter(BasePredictionWriter):
             str(self.events_path), mode="w+", dtype=np.int64,
             shape=(total_jets,),
         )
+        self.pos_mmap = None
+        if pos_tokenizer is not None:
+            self.pos_mmap = np.lib.format.open_memmap(
+                str(self.pos_path), mode="w+", dtype=np.int16,
+                shape=(total_jets, num_csts, pos_tokenizer.n_features),
+            )
         self.has_events = False
 
     def write_on_batch_end(
@@ -93,18 +112,36 @@ class MemmapPredictionWriter(BasePredictionWriter):
             events = prediction["eventNumber"].cpu().numpy()
             self.events_mmap[self.pos : self.pos + n] = events
 
+        if self.pos_mmap is not None:
+            pos_idx = self.pos_tokenizer(batch["positions"].cpu())
+            pos_idx = pos_idx.masked_fill(~batch["mask"].cpu().unsqueeze(-1), -1)
+            self.pos_mmap[self.pos : self.pos + n] = pos_idx.numpy().astype(np.int16)
+
         self.pos += n
 
     def finalize(self):
         """Flush mmaps and truncate to actual size if fewer jets than expected."""
-        del self.indices_mmap, self.labels_mmap, self.events_mmap
+        del self.indices_mmap, self.labels_mmap, self.events_mmap, self.pos_mmap
         return self.pos
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="tokenize")
 def main(cfg: DictConfig) -> None:
+    # Match the evaluation: the CUDA MHA fast path uses tanh-approximate GELU, training used exact GELU.
+    torch.backends.mha.set_fastpath_enabled(False)
+    torch.set_float32_matmul_precision("highest")
+
     log.info("Instantiating data module from config")
     datamodule = hydra.utils.instantiate(cfg.datamodule)
+
+    # Position tokens are exported exactly when the model is positions-out.
+    positions_out = cfg.datamodule.get("position_features") is not None
+    pos_tokenizer = hydra.utils.instantiate(cfg.pos_tokenizer) if cfg.get("pos_tokenizer") else None
+    if positions_out and pos_tokenizer is None:
+        raise ValueError("datamodule.position_features is set (positions-out model) but no pos_tokenizer is "
+                         "configured; set pos_tokenizer to the one used in training")
+    if pos_tokenizer is not None and not positions_out:
+        raise ValueError("pos_tokenizer is set but datamodule.position_features is not (positions-in model)")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     log.info(f"Loading VQ-VAE checkpoint: {cfg.ckpt_path} (device={device})")
@@ -115,10 +152,18 @@ def main(cfg: DictConfig) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Determine dataset size for memmap pre-allocation
-    with h5py.File(cfg.datamodule.data_path, "r") as f:
-        total_jets = len(f["jets"])
-    # Infer shape from model
-    num_csts = getattr(datamodule.test_set, "num_csts", 40)
+    if "data_path" in cfg.datamodule:
+        with h5py.File(cfg.datamodule.data_path, "r") as f:
+            total_jets = len(f["jets"])
+        num_csts = getattr(datamodule.test_set, "num_csts", 40)
+        stem = Path(cfg.datamodule.data_path).stem
+    else:  # COCOA: every event of datamodule.test_dir, capped at num_events
+        files = root_files_from_dir(Path(cfg.datamodule.data_dir) / cfg.datamodule.test_dir)
+        total_jets = sum(uproot.open(f"{f}:{TREE_NAME}").num_entries for f in files)
+        if cfg.datamodule.get("num_events"):
+            total_jets = min(total_jets, cfg.datamodule.num_events)
+        num_csts = cfg.datamodule.max_csts
+        stem = cfg.datamodule.test_dir
     num_quantizers = model.hparams.get("num_quantizers", 4)
 
     # Write memmap files to local scratch (fast NVMe, plenty of space)
@@ -127,7 +172,7 @@ def main(cfg: DictConfig) -> None:
         tmp_base = str(output_dir)
 
     with tempfile.TemporaryDirectory(dir=tmp_base) as tmp_dir:
-        writer = MemmapPredictionWriter(tmp_dir, total_jets, num_csts, num_quantizers)
+        writer = MemmapPredictionWriter(tmp_dir, total_jets, num_csts, num_quantizers, pos_tokenizer)
 
         log.info(
             f"Running tokenization via trainer.predict() "
@@ -146,10 +191,14 @@ def main(cfg: DictConfig) -> None:
         labels = np.lib.format.open_memmap(str(writer.labels_path), mode="r")[:actual_jets]
         codebooks = extract_codebooks(model)
 
-        stem = Path(cfg.datamodule.data_path).stem
         out_path = output_dir / f"{stem}.npz"
 
         save_dict = dict(indices=indices, labels=labels, codebooks=codebooks)
+        if pos_tokenizer is not None:
+            save_dict["pos_indices"] = np.lib.format.open_memmap(str(writer.pos_path), mode="r")[:actual_jets]
+            save_dict["pos_ranges"] = torch.stack([pos_tokenizer.mins, pos_tokenizer.maxs], -1).numpy()
+            save_dict["pos_n_bins"] = np.asarray(pos_tokenizer.n_bins, dtype=np.int32)
+            log.info(f"Including pos_indices {save_dict['pos_indices'].shape} (positions-out model)")
         if writer.has_events:
             event_numbers = np.lib.format.open_memmap(
                 str(writer.events_path), mode="r"

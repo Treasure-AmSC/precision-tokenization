@@ -18,6 +18,10 @@ defaults:
 ckpt_path: ???
 output_dir: ???
 
+# Positions-out models only: the PositionTokenizer used in training (export fails if it doesn't match
+# datamodule.position_features being set)
+pos_tokenizer: null
+
 # Override data module for full-file tokenization:
 #   - No train/val split — everything goes to predict (via test_dataloader)
 #   - Sequential order (seed=null) so output matches h5 row order

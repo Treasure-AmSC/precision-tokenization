@@ -2826,13 +2826,28 @@ _JETSET_NESTED_CKPT = {
     for n in (_jetset_name(32768, 2, 4), _jetset_name(32768, 4, 4))
 }
 
+nofp_datascan_jetset = {
+    "transformer_vqvae_enc_large_cb32768_cd8_nq4_lr0.0003_cw1.0_nj1000000":
+        _design("datascan", "vqvae_scan", 32768, 8, 4, JETSET_CST_FN),
+}
 nofp_jetset = _nofp_lookup("vqvae_scan", ([1024, 8192, 16384, 32768], [2, 4, 8, 16], [3, 4]), JETSET_CST_FN,
-                           _jetset_name, design_jetset, ckpt_overrides=_JETSET_NESTED_CKPT)
+                           _jetset_name, {**design_jetset, **nofp_datascan_jetset},
+                           ckpt_overrides=_JETSET_NESTED_CKPT)
+nofp_datascan_tracks = {
+    f"cocoa_tracks_datascan_n{n}": _design("datascan", "tracks_datascan", 4096, 4, 4, COCOA_CST_FN)
+    for n in cocoa_datascan_sizes
+}
+nofp_datascan_topos = {
+    f"cocoa_topos_datascan_n{n}": _design("datascan", "topos_datascan", 4096, 8, 4, COCOA_TOPO_CST_FN,
+                                           recon_idx=TOPO_POSIN_RECON_IDX)
+    for n in cocoa_datascan_sizes
+}
 nofp_tracks = _nofp_lookup("tracks", ([64, 256, 1024, 4096], [2, 4, 8], [2, 3, 4]), COCOA_CST_FN,
-                           lambda cb, cd, nq: f"cocoa_tracks_cb{cb}_cd{cd}_nq{nq}_lr0.001", design_tracks)
+                           lambda cb, cd, nq: f"cocoa_tracks_cb{cb}_cd{cd}_nq{nq}_lr0.001",
+                           {**design_tracks, **nofp_datascan_tracks})
 nofp_topos = _nofp_lookup("topos", ([64, 256, 1024, 4096], [2, 4, 8, 12], [2, 3, 4]), COCOA_TOPO_CST_FN,
-                          lambda cb, cd, nq: f"cocoa_topos_cb{cb}_cd{cd}_nq{nq}_lr0.001", design_topos,
-                          recon_idx=TOPO_POSIN_RECON_IDX)
+                          lambda cb, cd, nq: f"cocoa_topos_cb{cb}_cd{cd}_nq{nq}_lr0.001",
+                          {**design_topos, **nofp_datascan_topos}, recon_idx=TOPO_POSIN_RECON_IDX)
 
 def _nofp_param(lookup, key):
     return lambda wc: lookup[wc.nofp_name][key]
@@ -2855,6 +2870,14 @@ rule all_nofp_test:
         _nofp_targets(nofp_jetset, scan_output_dir),
         _nofp_targets(nofp_tracks, cocoa_output_dir),
         _nofp_targets(nofp_topos, cocoa_output_dir),
+
+localrules: all_datascan_nofp
+
+rule all_datascan_nofp:
+    input:
+        _nofp_targets(nofp_datascan_jetset, scan_output_dir),
+        _nofp_targets(nofp_datascan_tracks, cocoa_output_dir),
+        _nofp_targets(nofp_datascan_topos, cocoa_output_dir),
 
 rule test_nofp_jetset:
     input:

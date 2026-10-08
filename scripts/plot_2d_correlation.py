@@ -59,9 +59,11 @@ def main():
     # GridSpec layout: [scatter|residual|SPACER|scatter|residual|SPACER|...]
     # Derived from n_pairs_per_row so changing that value is the only edit needed.
     panel_size  = 5.0   # inches per panel (= col width inside margins)
-    spacer_frac = 0.40  # spacer column width relative to panel
-    hspace      = 0.30  # row gap as fraction of row height
+    spacer_frac = 0.38  # spacer column width relative to panel (room for axis labels)
+    hspace      = 0.45  # row gap as fraction of row height (room for axis labels)
     wspace      = 0.02  # tiny intra-pair gap (shows border line without separating panels)
+    label_fontsize = 24
+    tick_labelsize  = 18
 
     # pair i → GridSpec cols (i*3, i*3+1); spacer at i*3+2 (except after last pair)
     n_grid_cols = n_pairs_per_row * 3 - 1
@@ -115,10 +117,11 @@ def main():
         ax_scatter.ticklabel_format(style="sci", axis="both", scilimits=(-2, 3), useMathText=True)
         ax_scatter.xaxis.get_offset_text().set_visible(False)  # hide ×10ⁿ — avoids overlap with x-label
         ax_scatter.yaxis.get_offset_text().set_visible(False)
+        ax_scatter.tick_params(axis="both", labelsize=tick_labelsize)
 
         name = cst_feature_names[i] if i < len(cst_feature_names) else f"feature {i}"
-        ax_scatter.set_xlabel(f"Original {name}", fontsize=30)
-        ax_scatter.set_ylabel(f"Reconstructed {name}", fontsize=30)
+        ax_scatter.set_xlabel(f"Original {name}", fontsize=label_fontsize)
+        ax_scatter.set_ylabel(f"Reconstructed {name}", fontsize=label_fontsize)
 
         # --- marginal distributions (right of pair) ---
         # x-range matches the scatter; truth = dashed step, reco = solid fill
@@ -143,8 +146,9 @@ def main():
         ax_resid.xaxis.set_major_locator(mticker.MaxNLocator(4, prune="both"))
         ax_resid.ticklabel_format(style="sci", axis="x", scilimits=(-2, 3), useMathText=True)
         ax_resid.xaxis.get_offset_text().set_visible(False)
-        ax_resid.set_xlabel(name, fontsize=30)
-        ax_resid.set_ylabel("Density", fontsize=30)
+        ax_resid.tick_params(axis="x", labelsize=tick_labelsize)
+        ax_resid.set_xlabel(name, fontsize=label_fontsize)
+        ax_resid.set_ylabel("Density", fontsize=label_fontsize)
 
     # hide unused axes if n_features is odd
     for i in range(n_features, n_rows * n_pairs_per_row):
