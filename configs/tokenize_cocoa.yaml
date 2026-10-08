@@ -1,0 +1,29 @@
+---
+# COCOA tokenization config for scripts/export_tokens.py — tokenizes every event of datamodule.test_dir
+# (in file order) with the same datamodule/preprocessing as training.
+#
+# Usage:
+#   pixi run python scripts/export_tokens.py --config-name tokenize_cocoa \
+#       datamodule=cocoa_topos ckpt_path=/path/to/best.ckpt output_dir=results/tokenized/model_name \
+#       [datamodule.test_dir=val_100K_cells256]
+# Positions-out: also pass the training features, position_features, sliced scaler and
+#   pos_tokenizer='{_target_:heptokens.models.pos_tokenizer.PositionTokenizer,ranges:[[-3.0,3.0],[-1.0,1.0],[-1.0,1.0]],n_bins:1024}'
+defaults:
+  - hydra: default
+  - datamodule: cocoa_tracks
+  - _self_
+
+ckpt_path: ???
+output_dir: ???
+pos_tokenizer: null
+
+datamodule:
+  batch_size: 2048
+
+trainer:
+  _target_: lightning.Trainer
+  accelerator: auto
+  devices: 1
+  enable_progress_bar: true
+
+full_path: ${output_dir}
