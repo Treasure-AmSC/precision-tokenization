@@ -152,7 +152,7 @@ Outputs are in `LS/figures`. For text, I compared each output's `pdftotext` agai
 | Fig. 5 `rate_distortion_cocoa` | identical to B's render; text matches. The top-panel x-label reads only "Information fraction", the same as B's render. |
 | Fig. 6b `rate_distortion_jetset` | identical to B's render; text matches |
 | Fig. 6a ROC | generated; labels and axes match the paper text. No published file exists for a pixel comparison. |
-| Table 2 | **running** (bootstrap, 30M jets). Expected values are in paper Table 2. |
+| Table 2 | 29 of 30 entries match the paper exactly. **One difference:** continuous τ at εb = 0.70 is 451 ± 10 here vs 444 ± 10 in the paper. Output: `LS/figures/tables/rejection_table.txt`. See O16. |
 | Fig. C.8 | CSV identical; the numbers in the figure match the paper |
 | Fig. D.9a, b, d | plot step run in a temporary copy of the repo (`LS/tmprepo_d9`, without the q6 CSV); every printed value matches the paper |
 | Fig. D.9c | identical to the on-disk render; text matches |
@@ -182,7 +182,6 @@ All of these write only to `LS`.
 - 5a JetSet test
 - 5b eval
 - 5c loop: B frontier, then A steplr, then B steplr
-- `compare_roc.py` followed by `rejection_table.py`
 
 To stop them all: `pkill -u jkrupa -f '/lscratch/jkrupa/paper-release|run_5c|compare_roc.py|rejection_table.py'`.
 
@@ -202,7 +201,7 @@ To stop them all: `pkill -u jkrupa -f '/lscratch/jkrupa/paper-release|run_5c|com
 | Fig. 6a | `scripts/compare_roc.py --from_predictions` | – | `pf:fig6a` (= `SF:compare_roc_scan`) | `vqvae_scan/classifiers/{feature_clf_full_v3,token_clf_full_v2,token_clf_full_cb1024_nq3,token_clf_full_cb1024_nq4,token_clf_full_cb8192_nq4}` | – |
 | Fig. 6b | `plot_rate_distortion.py` (literals) | – | `pf:fig5_fig6b` | classifier predictions as in Fig. 6a | literals |
 | Fig. 6c | `scripts/codebook_tsne.py` (input from `scripts/export_tokens.py`) | – | `pf:fig6c` | token export of JetSet (32768, 8, 4) | **input npz deleted** (O7) |
-| Table 2 | `scripts/rejection_table.py` | – | `pf:table2` | as Fig. 6a | 5f running |
+| Table 2 | `scripts/rejection_table.py` | – | `pf:table2` | as Fig. 6a | O16 |
 | Table A.3 | – | – | – | – | no code |
 | Fig. B.7 | **none found** | – | – | – | O6 |
 | Fig. C.8 | `scripts/compare_mlp_transformer.py` | – | `pf:figC8` | `vqvae_scan/vqvae_scan` MLP and transformer runs (MLP 10M runs: `last.ckpt` only) | reads `test/` with the fast path on (O3) |
@@ -237,10 +236,11 @@ To stop them all: `pkill -u jkrupa -f '/lscratch/jkrupa/paper-release|run_5c|com
 **O13. Scalers.** `resources/cst_quantiles.joblib` and `resources/jet_quantiles.joblib` are gitignored. The plan is to ship them with the checkpoints on Zenodo; the README has placeholders `<ZENODO_DOI>` and `<COCOA_DATA_LOCATION>`.
 **O14. Absolute paths in existing A files.** Per instruction these were not edited; the README lists the path roots and the files that contain them.
 **O15. Regression device.** The stored results come from GPU (tanh-GELU fast path); CPU reproduces them to about 1% in IQR.
+**O16. Table 2, continuous τ at εb = 0.70.** The regenerated value is 451 ± 10; the paper has 444 ± 10. The other 29 entries match. The paper value may come from an earlier version of the predictions or of the script. Should the paper be updated, or the source of 444 be found?
 
 ## 6. Remaining steps (not started)
 
-1. Collect the running results: 5a JetSet and utilizations, 5b eval, 5c comparison, Table 2.
+1. Collect the running results: 5a JetSet and utilizations, 5b eval, 5c comparison.
 2. 5b diagnostics, A vs B on CPU.
 3. Decide D1.
 4. 5a after-port reruns from the committed tree.
