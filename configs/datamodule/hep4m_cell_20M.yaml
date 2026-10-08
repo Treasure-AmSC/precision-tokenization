@@ -1,0 +1,15 @@
+---
+# 20M-event cell dataset in the sparse format (scripts/sparsify_cell_h5.py,
+# built by workflow/hep4m_cell_preprocess_20M.smk). Train/val/test are separate
+# files -- val = val_100K_cells256, test = test_1M_cells256_isInfFalse.
+_target_: heptokens.vendored.cocoa.data.hep4m_cell.CellDataModule
+# Paths: <CELLS_SPARSE_DIR>/{train,val,test}, passed by workflow/vendored/cells_20M.smk.
+data_path: null
+train_path: ???
+val_path: ???
+test_path: ???
+sparse: true
+num_workers: 4
+batch_size: 512
+pin_memory: false
+persistent_workers: false

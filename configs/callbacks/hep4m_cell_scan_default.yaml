@@ -1,0 +1,39 @@
+---
+# configs/callbacks/hep4m_cell_scan_default.yaml
+# Matches the callbacks used by the reference cells_scan_default_2M scan
+# (<CELLS_RESULTS>/scan_default/cells_scan_default_2M/),
+# except CellTestMetrics, which doesn't exist in this repo (that scan's
+# test_metrics.json was written by a callback from an earlier, separate
+# project) -- rely on wandb-logged val/test metrics instead.
+model_summary:
+  _target_: lightning.pytorch.callbacks.RichModelSummary
+  max_depth: 2
+lr_monitor:
+  _target_: lightning.pytorch.callbacks.LearningRateMonitor
+  logging_interval: step
+checkpoint_per_epoch:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  dirpath: ${full_path}/checkpoints
+  filename: last
+  enable_version_counter: false
+  auto_insert_metric_name: false
+checkpoint_best:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  dirpath: ${full_path}/checkpoints
+  filename: best
+  monitor: val/total_loss
+  mode: min
+  save_top_k: 1
+  enable_version_counter: false
+  auto_insert_metric_name: false
+early_stopping:
+  _target_: lightning.pytorch.callbacks.EarlyStopping
+  monitor: val/total_loss
+  mode: min
+  patience: 15
+reconstruction_monitor:
+  _target_: heptokens.vendored.cocoa.callbacks.cell_recon.CellReconstructionMonitor
+  n_events: 4
+  log_every_n_epochs: 1
+  max_batches: 250
+  downsample: 1

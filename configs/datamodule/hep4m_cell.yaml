@@ -1,0 +1,11 @@
+---
+_target_: heptokens.vendored.cocoa.data.hep4m_cell.CellDataModule
+data_path: /path/to/calo/
+train_frac: 0.8
+val_frac: 0.1
+test_frac: 0.1
+seed: 42
+num_workers: 4
+batch_size: 512
+pin_memory: false
+persistent_workers: false

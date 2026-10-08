@@ -1,0 +1,56 @@
+---
+# @package _global_
+# Assemble VQ-VAE training on HEP4M calorimeter cell patches.
+#
+# Usage:
+#   pixi run python scripts/train.py --config-name train_cell \
+#     datamodule.data_path=<CELLS_H5_2M_DIR> \
+#     output_dir=<OUTPUT_DIR>
+defaults:
+  - _self_
+  - hydra: default
+  - callbacks: hep4m_cell_encode
+  - datamodule: hep4m_cell
+  - model: hep4m_cell_vqvae
+  - experiment:
+
+seed: 42
+project_name: hep4m_cells
+network_name: vqvae_v1
+output_dir: ???
+ckpt_path:
+weight_ckpt_path:
+save_test_preds: false
+test_only: false
+precision: medium
+compile:
+tags:
+full_resume: false
+ckpt_flag: last.ckpt
+
+trainer:
+  _target_: lightning.Trainer
+  max_epochs: 30
+  enable_progress_bar: true
+  accelerator: auto
+  devices: 1
+  num_nodes: 1
+  default_root_dir: ${full_path}
+  reload_dataloaders_every_n_epochs: 1
+  val_check_interval: 500
+  limit_val_batches: 50
+  gradient_clip_val: 1.0
+
+logger:
+  _target_: lightning.pytorch.loggers.wandb.WandbLogger
+  offline: false
+  id:
+  log_model: false
+  tags: ${tags}
+  project: ${project_name}
+  name: ${network_name}
+  save_dir: ${full_path}
+  resume: ${full_resume}
+
+root_dir: .
+full_path: ${output_dir}/${project_name}/${network_name}/

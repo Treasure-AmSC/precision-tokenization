@@ -1,0 +1,33 @@
+---
+# configs/model/hep4m_cell_vqvae.yaml
+# VQ-VAE config for HEP4M calorimeter cell patches.
+#
+# Token representation: 156 patches × 128 features per event.
+#   [64 pixel energies (energy^0.3) | 64 binary pixel indicators]; positions in separate key.
+#   Empty patches are masked via energy-based mask.
+_target_: heptokens.vendored.models.vq_vae.LitVqVae
+input_key: energy
+encoder:
+  _target_: heptokens.vendored.models.coders.Encoder
+  _partial_: true
+  input_key: energy
+  # input_dim (64) inferred from data_sample.shape[-1] at runtime
+decoder:
+  _target_: heptokens.vendored.models.coders.CellDecoder
+  _partial_: true
+  input_key: energy
+  # Per-pixel energy-MSE weighting: w_i = E_i**energy_loss_alpha (E_i = linear
+  # truth energy). 0.0 = original unweighted loss. energy_power must match
+  # preprocess_hep4m_cells.py's ENERGY_POWER (targets are stored as E**p).
+  energy_loss_alpha: 0.0
+  energy_sum_loss_weight: 0.0
+  energy_power: 0.3
+  energy_loss_type: mse  # mse | l1
+  # output_dim (128 = 2*64) inferred from data_sample.shape[-1] at runtime
+# ── VQ-VAE hyperparameters ─────────────────────────────────────────────────
+codebook_size: 256  # codes per quantizer stage
+codebook_dim: 32  # latent dimension
+num_quantizers: 3  # residual quantizer stages
+commitment_weight: 1.0
+reconstruction_weight: 1.0
+learning_rate: 1e-3

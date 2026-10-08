@@ -1,0 +1,63 @@
+---
+# configs/model/hep4m_cell_transformer_masked_posenc_steplr_large_vqvae.yaml
+# hep4m_cell_transformer_masked_posenc_warmup_large_vqvae.yaml with the LR
+# schedule stepped per optimizer step instead of per epoch (needed for the
+# 20M-event runs, which only train a few epochs). Same shape: linear warmup
+# from 1e-2*lr, then cosine decay to 1e-6 (= final_factor * lr).
+_target_: heptokens.vendored.models.vq_vae.LitVqVae
+input_key: energy
+mask_key: mask
+encoder:
+  _target_: heptokens.vendored.models.coders.Encoder
+  _partial_: true
+  input_key: energy
+  mask_key: mask
+  positions_key: positions
+  model:
+    _target_: heptokens.vendored.models.transformer.Transformer
+    _partial_: true
+    d_model: 256
+    n_heads: 8
+    num_layers: 6
+    dim_feedforward: 1024
+    dropout: 0.
+    activation: gelu
+    pos_dim: 3
+decoder:
+  _target_: heptokens.vendored.models.coders.CellDecoder
+  _partial_: true
+  input_key: energy
+  mask_key: mask
+  positions_key: positions
+  energy_loss_alpha: 0.0
+  energy_sum_loss_weight: 0.0
+  energy_power: 0.3
+  energy_loss_type: mse  # mse | l1
+  model:
+    _target_: heptokens.vendored.models.transformer.Transformer
+    _partial_: true
+    d_model: 256
+    n_heads: 8
+    num_layers: 6
+    dim_feedforward: 1024
+    dropout: 0.
+    activation: gelu
+    pos_dim: 3
+codebook_size: 256
+codebook_dim: 32
+num_quantizers: 3
+commitment_weight: 1.0
+reconstruction_weight: 1.0
+learning_rate: 3e-4
+optimizer:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: 3.0e-4
+scheduler_interval: step
+scheduler:
+  _target_: heptokens.vendored.models.utils.linear_warmup_cosine_decay
+  _partial_: true
+  warmup_steps: 15600  # = 5 epochs at 2M events / bs512, as in the epoch-based runs
+  total_steps: -1  # read from the trainer (max_steps, else steps/epoch * max_epochs)
+  init_factor: 1.0e-2
+  final_factor: 3.3333e-3  # 1e-6 / 3e-4
