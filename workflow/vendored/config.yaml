@@ -1,0 +1,29 @@
+# Paths and SLURM settings for the workflows in workflow/vendored/ (cells, jet-pT regression, paper figures).
+# Every <...> is a placeholder: fill it in here or pass your own file with --configfile.
+# See README.md, "Reproducing the paper".
+
+# Raw COCOA single-jet ROOT files: <cocoa_root>/{train_topup2_20M_cells256,val_100K_cells256,test_1M_cells256_isInfFalse}
+cocoa_root: <COCOA_ROOT>
+# Dense cell HDF5 (preprocess_hep4m_cells.py, ds=1): <cells_h5_dir>/{train,val,test}/singlejet_<idx>.h5
+cells_h5_dir: <CELLS_H5_DIR>
+# The 2M-event training set: singlejet_270..289.h5 only (linked into <cells_h5_dir>/train)
+cells_h5_2M_dir: <CELLS_H5_2M_DIR>
+# Sparse cell format (sparsify_cell_h5.py): <cells_sparse_dir>/{train,val,test}
+cells_sparse_dir: <CELLS_SPARSE_DIR>
+# Cell tokenizer runs: <cells_results>/cells_scan_2M_a0.4_frontier/transformer/<run>, <cells_results>/cells_20M/full/<run>
+cells_results: <CELLS_RESULTS>
+# Repo-A results dir holding the set-based tokenizers (cocoa_scan/{tracks,topos}/<run>/checkpoints/best.ckpt)
+a_results: <A_RESULTS>
+# Jet-pT regression outputs: <regression_results>/{track,topo}_token_regression/{tokens,regressors,eval}
+regression_results: <REGRESSION_RESULTS>
+# Figure outputs of workflow/vendored/paper_figures.smk
+figures_dir: <FIGURES_DIR>
+# Fig. 3 schematic only: an MLP-coder cell checkpoint (the one used for the published panels is not recorded)
+schematic_ckpt: <SCHEMATIC_CKPT>
+
+# Job prefixes. "local" runs each job in the foreground (workflow/vendored/run_local.sh). On SLURM, e.g.
+#   slurm_gpu: "sbatch --wait -A <ACCOUNT> -p <GPU_PARTITION> --gres=gpu:1"
+#   slurm_cpu: "sbatch --wait -A <ACCOUNT> -p <CPU_PARTITION>"
+# The rules append the per-job -t/--mem/-c/-D/-J/-o/--wrap used for the paper runs.
+slurm_gpu: local
+slurm_cpu: local
