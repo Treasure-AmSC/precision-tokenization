@@ -1,0 +1,153 @@
+"""Reproduce the JetSet tokenizer scan of the paper (Fig. 1, Fig. 4, Table 1 JetSet row) with the paper's scripts.
+
+    pixi run snakemake -s workflow/Snakefile_simple --cores 1 --config data_dir=/path/to/jetset
+    pixi run snakemake -s workflow/Snakefile_simple --profile <your SLURM profile> ...
+
+Hyperparameters are those of the stored Table 1 JetSet run (transformer_vqvae_enc_large_cb32768_cd8_nq4_...).
+Override any config value below with --config key=value or --configfile.
+"""
+import math
+import sys
+from itertools import product
+from pathlib import Path
+
+# ── Configuration ────────────────────────────────────────────────────────────
+DATA_DIR = Path(config.get("data_dir", "data")).resolve()  # holds mc-flavtag-ttbar-{small,medium}.h5
+OUT = Path(config.get("out_dir", "results/simple")).resolve()
+TRAIN_FILE = DATA_DIR / "mc-flavtag-ttbar-medium.h5"  # tokenizer training
+TEST_FILE = DATA_DIR / "mc-flavtag-ttbar-small.h5"  # scalers, test, utilization, export
+
+GRID = config.get("grid", {"K": [1024, 8192, 16384, 32768], "d": [2, 4, 8, 16], "Q": [3, 4]})
+EXTRA = config.get("extra_points", [[32768, 8, 2], [32768, 8, 6], [32768, 8, 8]])  # (K, d, Q), Fig. 4a
+TRAIN_JETS = config.get("train_jets", 10_000_000)  # loaded, then split 70/15/15
+MAX_EPOCHS = config.get("max_epochs", 200)
+TEST_BATCHES = config.get("test_batches", 100)  # x 1024 jets
+UTIL_JETS = config.get("util_jets", 50_000)
+PREP_JETS = config.get("prep_jets", 1_000_000)
+THREADS = config.get("threads", 8)  # per job; Snakemake sets OMP_NUM_THREADS to this
+
+# Tiny grid for a quick try (a few hundred training steps per tokenizer; use small copies of the data files,
+# since the export tokenizes the whole test file):
+# --config 'grid={"K": [1024], "d": [8], "Q": [3, 4]}' 'extra_points=[]' train_jets=20000 max_epochs=20 \
+#          test_batches=5 util_jets=5000 prep_jets=20000
+
+D = 20  # JetSet track features
+REPO = Path(workflow.basedir).parent
+PY = f"cd {REPO} && python"
+POINTS = list(product(GRID["K"], GRID["d"], GRID["Q"])) + [tuple(p) for p in EXTRA]
+RUNS = {f"cb{K}_cd{d}_nq{Q}": dict(K=K, d=d, Q=Q) for K, d, Q in POINTS}
+CST_FN, JET_FN = OUT / "resources/cst_quantiles.joblib", OUT / "resources/jet_quantiles.joblib"
+
+# Stored Table 1 JetSet configuration (datamodule=atlas_mappable, batch size 1024, seed 42 and early stopping
+# with patience 20 on val/total_loss come from the config defaults).
+ARCH = " ".join(f"model.{s}.model.{k}={v}" for s in ("encoder", "decoder")
+                for k, v in dict(d_model=256, n_heads=8, num_layers=6, dim_feedforward=1024).items())
+MODEL = "model=transformer_vqvae model.learning_rate=0.0003 +model.commitment_weight=1.0 " + ARCH
+TRANSFORMS = (f"datamodule.transforms.preprocess.cst_fn.filename={CST_FN} "
+              f"datamodule.transforms.preprocess.jet_fn.filename={JET_FN}")
+
+
+def vq(wc):
+    r = RUNS[wc.run]
+    return f"model.codebook_size={r['K']} model.codebook_dim={r['d']} model.num_quantizers={r['Q']}"
+
+
+wildcard_constraints:
+    run="|".join(RUNS),
+
+
+rule all:
+    input:
+        OUT / "summary.csv",
+        expand(OUT / "scan/{run}/tokens/mc-flavtag-ttbar-small.npz", run=RUNS),
+
+
+rule preprocess:
+    output:
+        CST_FN,
+        JET_FN,
+    shell:
+        f"{PY} scripts/get_preprocessing.py --file_path {TEST_FILE} --num_jets {PREP_JETS} "
+        f"--cst_mode log_standard --jet_mode log_standard --cst_log_features pt --jet_log_features pt "
+        f"--output_dir {OUT}/resources"
+
+
+rule train:
+    input:
+        CST_FN,
+        JET_FN,
+    output:
+        OUT / "scan/{run}/checkpoints/best.ckpt",
+    threads: THREADS
+    params:
+        vq=vq,
+    shell:
+        f"{PY} scripts/train.py output_dir={OUT} project_name=scan network_name={{wildcards.run}} "
+        f"datamodule=atlas_mappable datamodule.data_path={TRAIN_FILE} datamodule.num_jets={TRAIN_JETS} "
+        f"{MODEL} {{params.vq}} model.optimizer.lr=0.0003 "
+        f"trainer.max_epochs={MAX_EPOCHS} trainer.check_val_every_n_epoch=1 trainer.val_check_interval=1.0 "
+        f"trainer.limit_val_batches=1.0 +trainer.num_sanity_val_steps=0 trainer.gradient_clip_val=1.0 "
+        f"trainer.enable_progress_bar=false callbacks=encode "
+        f"callbacks.reconstruction_monitor.log_every_n_epochs=5 +callbacks.reconstruction_monitor.max_batches=100 "
+        f"{TRANSFORMS}"
+
+
+rule test:
+    """As for Table 1: fused-attention fast path off, fp32 matmuls; then codebook utilization."""
+    input:
+        ckpt=OUT / "scan/{run}/checkpoints/best.ckpt",
+    output:
+        metrics=OUT / "scan/{run}/test_nofastpath/test_metrics/test_metrics.npz",
+        util=OUT / "scan/{run}/utilization.csv",
+    threads: THREADS
+    params:
+        vq=vq,
+    shell:
+        f"{PY} scripts/train.py output_dir={OUT} project_name=scan network_name={{wildcards.run}}/test_nofastpath "
+        f"datamodule=atlas_iterable datamodule.data_path={TEST_FILE} datamodule.train_frac=0.001 "
+        f"datamodule.val_frac=0.001 datamodule.test_frac=0.998 datamodule.num_workers=2 datamodule.num_csts=40 "
+        f"ckpt_path={{input.ckpt}} test_only=true {MODEL} {{params.vq}} callbacks=encode "
+        f"+callbacks.reconstruction_monitor.max_batches={TEST_BATCHES} trainer.limit_val_batches={TEST_BATCHES} "
+        f"trainer.enable_progress_bar=false {TRANSFORMS} "
+        f"precision=highest +mha_fastpath=false +test_marker=TEST_NOFASTPATH_SUCCESS.txt\n"
+        # codebook_vqvae_utilization.py reads its data file and scaler from module constants
+        f"{PY} -c \"import sys; sys.path.insert(0, 'scripts'); from pathlib import Path; "
+        f"import codebook_vqvae_utilization as u; u.DATA_PATH = Path('{TEST_FILE}'); "
+        f"u.RESOURCES = Path('{OUT}/resources'); "
+        f"sys.argv = ['u', '--run_dirs', '{OUT}/scan/{{wildcards.run}}', '--num_jets', '{UTIL_JETS}', "
+        f"'--output', '{{output.util}}']; u.main()\""
+
+
+rule export:
+    input:
+        ckpt=OUT / "scan/{run}/checkpoints/best.ckpt",
+    output:
+        OUT / "scan/{run}/tokens/mc-flavtag-ttbar-small.npz",
+    threads: THREADS
+    shell:
+        f"{PY} scripts/export_tokens.py ckpt_path={{input.ckpt}} output_dir={OUT}/scan/{{wildcards.run}}/tokens "
+        f"datamodule.data_path={TEST_FILE} {TRANSFORMS}"
+
+
+rule summary:
+    input:
+        metrics=expand(OUT / "scan/{run}/test_nofastpath/test_metrics/test_metrics.npz", run=RUNS),
+        util=expand(OUT / "scan/{run}/utilization.csv", run=RUNS),
+    output:
+        OUT / "summary.csv",
+    run:
+        import csv
+        import numpy as np
+        sys.path.insert(0, str(REPO / "scripts"))
+        from plot_design_rules import iqr_over_median, normalized_mae
+
+        with open(output[0], "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["K", "d", "Q", "bits", "information_fraction", "resolution", "mae", "utilization"])
+            for run, npz, util in zip(RUNS, input.metrics, input.util):
+                r = RUNS[run]
+                bits = r["Q"] * math.log2(r["K"])
+                with open(util) as u:
+                    utilization = float(next(csv.DictReader(u))["avg_utilization"])
+                w.writerow([r["K"], r["d"], r["Q"], bits, bits / (32 * D), iqr_over_median(npz),
+                            float(np.mean(normalized_mae(npz))), utilization])

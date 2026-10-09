@@ -1,7 +1,7 @@
 # Precision Tokenization for Multi-Modal Data in High Energy Physics
 
 Code for the paper *Precision Tokenization for Multi-Modal Data in High Energy Physics* (arXiv:XXXX.XXXXX).
-This is a frozen release; for new work use the [heptokens library](https://github.com/treasure-AmSC/heptokens).
+*Important: this is a frozen release. For new work, use the maintained [heptokens library](https://github.com/treasure-AmSC/heptokens).*
 
 - **JetSet** is public: [doi:10.7483/OPENDATA.ATLAS.QG8W.TO8P](https://doi.org/10.7483/OPENDATA.ATLAS.QG8W.TO8P).
 - **COCOA:** we are still figuring out how to host the data.
@@ -10,115 +10,81 @@ This is a frozen release; for new work use the [heptokens library](https://githu
 ## Setup
 
 ```bash
-pixi install                  # environment pinned by pixi.lock
+pixi install                  # after installing pixi. 
 export WANDB_MODE=disabled    # training logs to Weights & Biases otherwise
 ```
+A full training will require a GPU. Evaluation and plotting can run on CPU, but slowly (a JetSet test takes a few hours on CPU) and a GPU is preferred.
 
-Training needs a GPU. Evaluation and plotting run on CPU, but slowly (a JetSet test takes a few hours on CPU).
+Download the JetSet files from the [record page](https://opendata.cern.ch/record/93940) or with the CERN Open Data client:
 
-Download the JetSet files from the [record page](https://opendata.cern.ch/record/93940) or with the CERN Open
-Data client. Tokenizer training uses `mc-flavtag-ttbar-medium.h5` and the test sample is
-`mc-flavtag-ttbar-small.h5`. The classifiers (Fig. 6, Table 2) use all three files, including the 85 GB
-`mc-flavtag-ttbar-large.h5`.
+- `mc-flavtag-ttbar-medium.h5` is used to train the tokenizers.
+- `mc-flavtag-ttbar-small.h5` is used to fit the scalers and to test.
+- The classifiers (Fig. 6, Table 2) use all three files, including the 85 GB `mc-flavtag-ttbar-large.h5`.
 
+Download the data like this or with a simple `wget`:
 ```bash
 pip install cernopendata-client
 cernopendata-client download-files --recid 93940 --filter-name mc-flavtag-ttbar-medium.h5
 cernopendata-client download-files --recid 93940 --filter-name mc-flavtag-ttbar-small.h5
 ```
 
-## Site-specific paths
+## Reproducing the JetSet scan
 
-The code was run on one cluster and some paths are hard-coded. Path roots:
-
-- `/sdf/data/atlas/u/jkrupa/`: the repository (results, scalers) and the complete `mc-flavtag-ttbar-large.h5`
-- `/sdf/scratch/users/j/jkrupa/data/atlas/`: the JetSet HDF5 files
-- `/fs/ddn/sdf/group/atlas/d/jkrupa/`: COCOA ROOT files, calorimeter-cell data and runs, token exports
-- `/sdf/scratch/users/s/samklein/`, `/sdf/group/mli/samklein/`: old defaults
-- `/lscratch/`: node-local staging; `/global/cfs/`: NERSC
-
-What to change:
-
-- **JetSet scans:** in `workflow/Snakefile`, `WORKSPACE` (top of the file) and the JetSet file paths
-  (`/sdf/scratch/...`). Or pass `datamodule.data_path` and `output_dir` on the command line, as in the examples.
-- **Training defaults:** `configs/train.yaml` (`output_dir`), `configs/datamodule/atlas_mappable.yaml` and
-  `atlas_iterable.yaml` (`data_path`).
-- **COCOA tracks and topoclusters:** `configs/datamodule/cocoa_{tracks,topos,truthpart}.yaml` (`data_dir`,
-  scaler path) and `COCOA_DATA_DIR` in `workflow/Snakefile`.
-- **Calorimeter cells, regression and figures:** copy `workflow/vendored/config.yaml` and fill in its `<...>`
-  placeholders.
-- **Figure scripts:** `scripts/plot_design_rules.py` (`CELLS["dir"]`, the cell runs),
-  `scripts/codebook_vqvae_utilization.py` (`DATA_PATH`), `scripts/compare_roc.py`.
-- **Classifiers:** `configs/datamodule/{atlas_iterable_multi,token_npz}.yaml`, `configs/model/token_classifier.yaml`.
-- **Not needed for the paper commands:** `workflow/preprocessing.smk`, `scripts/{get_preprocessing,simple_demo,
-  build_hep4m_preprocessed,export_cocoa_tokens_hep4m,fit_cocoa_truthpart_scaler}.py`, `scripts/pflow_*`,
-  `scripts/copy_tokenizers_to_nersc.sh`, `tests/test_positions_out.py`.
-
-## Preprocessing
+`workflow/Snakefile_simple` reproduces the JetSet points in Fig. 1 and Fig. 4a-c, and the Table 1 JetSet row.
+Positions-out (Fig. 4d) is not covered by it. It needs only the two files above:
 
 ```bash
-pixi run python scripts/get_preprocessing.py --file_path mc-flavtag-ttbar-medium.h5 \
-    --cst_mode log_standard --jet_mode log_standard --output_dir resources
+pixi run snakemake -s workflow/Snakefile_simple --cores 8 --config data_dir=/path/to/jetset out_dir=results/simple
 ```
+Snakemake chains rules and running this workflow will actually run five rules:
 
-This fits the feature scalers and writes `resources/cst_quantiles.joblib` (track features) and
-`resources/jet_quantiles.joblib` (jet features), which the training configs read.
+1. **`preprocess`** fits the scalers once.
+2. **`train`** trains one tokenizer per (K, d, Q).
+3. **`test`** evaluates each tokenizer as for Table 1 and computes its codebook utilization.
+4. **`export`** writes the token indices and codebooks of the test file.
+5. **`summary`** collects everything into `summary.csv`, with K, d, Q, bits, information fraction, jet pT resolution (IQR/median), normalized MAE and utilization.
 
-## Training a tokenizer
+Details:
 
-This is exactly the Table 1 JetSet configuration:
+- **Hyperparameters:** taken from the stored config of the Table 1 JetSet run.
+  - Large Transformer, learning rate 3·10⁻⁴, commitment weight 1, batch size 1024, seed 42.
+  - 10M jets are loaded from the medium file and split 70/15/15, so each tokenizer trains on 7M jets.
+  - Up to 200 epochs, with early stopping after 20 epochs without improvement in the validation loss.
+- **Default grid:** the paper's, K ∈ {1024, 8192, 16384, 32768}, d ∈ {2, 4, 8, 16}, Q ∈ {3, 4}, plus additional scan Q ∈ {2, 6, 8} at (K, d) = (32768, 8).
+- **Changing the grid:** the configuration is at the top of the file. Change the grid with
+  `--config 'grid={"K": [...], "d": [...], "Q": [...]}'`, filling in the desired K, d, Q values.  A commented tiny grid there is a quick first pass.
+- **Running on a cluster:** the rules contain no job submission, so the same file runs locally, with a SLURM executor plugin, or with your Snakemake profile (`--profile ...`).
+
+Small complication: testing uses "nofp": PyTorch's fused-attention fast path (fp) is off and matmuls run in fp32. The JetSet, track and topocluster tokenizer numbers in the paper use it (Table 1, Figs. 1, 4, E.10, Table C.4, and the Transformer entries of Fig. C.8).
+This doesn't affect MLPs.
+
+## Breaking it down further into single steps
 
 ```bash
+# Scalers: resources/cst_quantiles.joblib (track features) and resources/jet_quantiles.joblib (jet features)
+pixi run python scripts/get_preprocessing.py --file_path mc-flavtag-ttbar-small.h5 --num_jets 1000000 \
+    --cst_mode log_standard --jet_mode log_standard --cst_log_features pt --jet_log_features pt --output_dir resources
+
+# Running a single tokenizer
 pixi run python scripts/train.py model=transformer_vqvae datamodule=atlas_mappable callbacks=encode \
-    datamodule.data_path=mc-flavtag-ttbar-medium.h5 datamodule.num_jets=10000000 \
-    model.encoder.model.d_model=256 model.encoder.model.n_heads=8 model.encoder.model.num_layers=6 \
-    model.encoder.model.dim_feedforward=1024 model.decoder.model.d_model=256 model.decoder.model.n_heads=8 \
-    model.decoder.model.num_layers=6 model.decoder.model.dim_feedforward=1024 \
-    model.codebook_size=32768 model.codebook_dim=8 model.num_quantizers=4 +model.commitment_weight=1.0 \
-    model.learning_rate=0.0003 model.optimizer.lr=0.0003 \
-    trainer.max_epochs=200 trainer.gradient_clip_val=1.0 +trainer.num_sanity_val_steps=0 \
-    trainer.check_val_every_n_epoch=1 trainer.val_check_interval=1.0 trainer.limit_val_batches=1.0 \
-    callbacks.reconstruction_monitor.log_every_n_epochs=5 +callbacks.reconstruction_monitor.max_batches=100 \
+    datamodule.data_path=$PWD/mc-flavtag-ttbar-medium.h5 \
     datamodule.transforms.preprocess.cst_fn.filename=$PWD/resources/cst_quantiles.joblib \
     datamodule.transforms.preprocess.jet_fn.filename=$PWD/resources/jet_quantiles.joblib \
-    output_dir=$PWD/results project_name=vqvae_scan network_name=my_tokenizer
+    model.codebook_size=32768 model.codebook_dim=8 model.num_quantizers=4 \
+    output_dir=$PWD/results project_name=my_scan network_name=my_tokenizer
 ```
 
-The configuration in detail:
+The training command is illustrative: it uses the medium baseline model and settings. The exact Table 1 configuration is the `train` rule of `workflow/Snakefile_simple`. The three main hyperparameters are `model.codebook_size` (K), `model.codebook_dim` (d) and `model.num_quantizers` (Q).
 
-- **Data:** 10M jets are loaded from the medium file and split 70/15/15, so the tokenizer trains on 7M jets.
-- **Training:** batch size 1024, learning rate 3·10⁻⁴, seed 42, up to 200 epochs.
-- **Early stopping and checkpoint:** training stops after 20 epochs without improvement in the validation loss
-  (from `callbacks=encode`), and `checkpoints/best.ckpt` is the epoch with the lowest validation loss.
+## The full paper workflow
 
-The three main hyperparameters are `model.codebook_size` (K), `model.codebook_dim` (d) and `model.num_quantizers` (Q).
+`workflow/Snakefile` and `workflow/vendored/*.smk` are the complete record of how every result in the paper was produced. 
+They were written for the SLAC cluster which uses `slurm`. 
+Jobs are submitted with `sbatch` inside the rules (set the account and partition with `--config slurm_account=... slurm_partition=...`).
+In principle, snakemake should support other jobs, and these workflows have been tested at other submission systems like `pbs`. 
+Paths are hard-coded (see below). `workflow/vendored/*.smk` read their paths from a copy of `workflow/vendored/config.yaml`, passed with `--configfile my_paths.yaml`.
 
-## Example: the rate-distortion (Pareto) plot, Fig. 1
-
-The scan runs through `workflow/Snakefile`, which submits one SLURM job per tokenizer with `sbatch`. Set the
-account and partition with `--config slurm_account=... slurm_partition=...`.
-
-1. **Train the paper's JetSet grid.** This is K ∈ {1024, 8192, 16384, 32768}, d ∈ {2, 4, 8, 16} and Q ∈ {3, 4},
-   plus Q ∈ {2, 6, 8} at (32768, 8). Every point uses the command above.
-   ```bash
-   pixi run snakemake -s workflow/Snakefile all_paper_scan --cores 40
-   ```
-2. **Evaluate every run on the test set.** This writes `test_nofastpath/` in each run directory.
-   ```bash
-   pixi run snakemake -s workflow/Snakefile all_paper_scan_test --cores 40
-   ```
-3. **Make the plot.** This writes `rate_distortion_pareto_with_cells_binning.pdf` (Fig. 1), `design_rules.pdf`
-   (Fig. 4) and the MAE version (Fig. E.10). Modalities with no runs are skipped.
-   ```bash
-   pixi run python scripts/plot_design_rules.py --e100 --outdir plots/design_rules
-   ```
-
-"nofp" means the test ran with PyTorch's fused-attention fast path off and fp32 matmuls. The tokenizer numbers
-use it: Table 1, Figs. 1, 4, C.8, E.10 and Table C.4.
-
-## Calorimeter cells
-
-These use `workflow/vendored/*.smk` with your copy of `workflow/vendored/config.yaml`:
+### Calorimeter cells: special notes 
 
 ```bash
 # Cell inputs from the COCOA ROOT files: the 2M training set, the 20M set and the test set
@@ -136,16 +102,18 @@ pixi run snakemake -s workflow/vendored/cells_frontier_2M.smk --configfile my_pa
 - **Mean active pixels (Fig. E.12 caption):** the means of `evt_true_cnt` and `evt_pred_cnt` in
   `cell_diagnostics/diagnostics_arrays.npz`.
 
-## Other Snakemake rules
+### Other rules
 
 Training and evaluation (`workflow/Snakefile`):
 
 - `all_nofp_test`: evaluates the JetSet, track and topocluster scans (Table 1, Figs. 1, 4).
+- Positions-out runs (Fig. 4d): JetSet with `all_design_batch2` (it also trains the seed repeats), evaluated by
+  `all_nofp_test`. COCOA tracks and topoclusters with `all_design_e100`, evaluated by `all_design_e100_nofp`.
 - `all_datascan_nofp`: dataset-size scans (Table C.4).
 - `compare_roc_scan`: flavour-tagging classifiers (Fig. 6a, Table 2).
 - `workflow/vendored/{track,topo}_token_regression.smk all`: jet-pT regression on tokens (Fig. 5 top).
 
-Figures and tables (`workflow/vendored/paper_figures.smk`), for example:
+### Making the rest of the figures and tables (`workflow/vendored/paper_figures.smk`), for example:
 
 ```bash
 pixi run snakemake -s workflow/vendored/paper_figures.smk table2 --configfile my_paths.yaml --cores 1
@@ -165,6 +133,35 @@ pixi run snakemake -s workflow/vendored/paper_figures.smk table2 --configfile my
   `selected_2d_correlation/cocoa_topos_cb4096_cd8_nq6.pdf` (the rule `figE11` needs a concrete target).
 
 Not produced by this code: Figs. 2, 3 and B.7 and Table A.3 (illustrations), and Fig. 6c (its input is no longer available).
+
+### Site-specific paths
+
+`workflow/Snakefile_simple` has none. The rest of the code was run on one cluster, and some paths are
+hard-coded. Path roots:
+
+- `/sdf/data/atlas/u/jkrupa/`: the repository (results, scalers) and the complete `mc-flavtag-ttbar-large.h5`
+- `/sdf/scratch/users/j/jkrupa/data/atlas/`: the JetSet HDF5 files
+- `/fs/ddn/sdf/group/atlas/d/jkrupa/`: COCOA ROOT files, calorimeter-cell data and runs, token exports
+- `/sdf/scratch/users/s/samklein/`, `/sdf/group/mli/samklein/`: old defaults
+- `/lscratch/`: node-local staging; `/global/cfs/`: NERSC
+
+What to change:
+
+- **JetSet scans:** in `workflow/Snakefile`, `WORKSPACE` (top of the file) and the JetSet file paths
+  (`/sdf/scratch/...`).
+- **Training defaults:** `configs/train.yaml` (`output_dir`), `configs/datamodule/atlas_mappable.yaml` and
+  `atlas_iterable.yaml` (`data_path`). Or pass `output_dir` and `datamodule.data_path` on the command line.
+- **COCOA tracks and topoclusters:** `configs/datamodule/cocoa_{tracks,topos,truthpart}.yaml` (`data_dir`,
+  scaler path) and `COCOA_DATA_DIR` in `workflow/Snakefile`.
+- **Calorimeter cells, regression and figures:** copy `workflow/vendored/config.yaml` and fill in its `<...>`
+  placeholders.
+- **Figure scripts:** `scripts/plot_design_rules.py` (`CELLS["dir"]`, the cell runs),
+  `scripts/codebook_vqvae_utilization.py` (`DATA_PATH`), `scripts/compare_roc.py`.
+- **Classifiers:** `configs/datamodule/{atlas_iterable_multi,token_npz}.yaml`, `configs/model/token_classifier.yaml`.
+- **Not needed for the paper commands:** `workflow/preprocessing.smk`, `scripts/{simple_demo,
+  build_hep4m_preprocessed,export_cocoa_tokens_hep4m,fit_cocoa_truthpart_scaler}.py`, `scripts/pflow_*`,
+  `scripts/copy_tokenizers_to_nersc.sh`, `tests/test_positions_out.py`. `scripts/get_preprocessing.py` only has
+  a default `--file_path`.
 
 ## Code layout
 
