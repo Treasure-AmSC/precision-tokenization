@@ -43,6 +43,7 @@ rule all_figures:
         FIG / "rate_distortion/rate_distortion_jetset.pdf",  # Fig. 6b
         FIG / "roc/token_clf_scan_vs_refs_btag_roc.pdf",  # Fig. 6a
         FIG / "tables/rejection_table.txt",  # Table 2
+        FIG / "tables/table_c4.csv",  # Table C.4
         FIG / "mlp_vs_transformer/mlp_vs_transformer.pdf",  # Fig. C.8
         FIG / "cell_utilization/plots/util_vs_nq_transformer_large.pdf",  # Fig. D.9c
         expand(FIG / "selected_2d_correlation/{name}.pdf", name=E11_RUNS),  # Fig. E.11
@@ -122,6 +123,14 @@ rule table2:
         {PYTHON_BIN} scripts/rejection_table.py --run_dirs {params.run_dirs} --run_labels {params.labels} \
             --targets 0.50 0.70 --n_boot 200 > {output}
         """
+
+
+rule tableC4:
+    """Jet resolution versus training-set size, collected from the stored run metrics."""
+    output:
+        FIG / "tables/table_c4.csv",
+    shell:
+        "{PYTHON_BIN} scripts/table_c4.py --a_results {A_RES} --cells_results {CELLS} --out {output}"
 
 
 rule figC8:
