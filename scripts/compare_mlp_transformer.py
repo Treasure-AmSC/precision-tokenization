@@ -30,7 +30,7 @@ import numpy as np
 # ---------------------------------------------------------------------------
 SIZES   = ["small", "medium", "large"]
 N_JETS  = [1_000_000, 10_000_000]
-NJ_LABELS = ["1M", "10M"]
+NJ_LABELS = ["0.7M", "7M"]  # training jets: 70% of the N_JETS loaded
 
 # Encoder parameter counts (encoder only, not full model)
 PARAMS = {
