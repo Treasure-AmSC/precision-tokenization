@@ -18,8 +18,6 @@ a_results: <A_RESULTS>
 regression_results: <REGRESSION_RESULTS>
 # Figure outputs of workflow/vendored/paper_figures.smk
 figures_dir: <FIGURES_DIR>
-# Fig. 3 schematic only: an MLP-coder cell checkpoint (the one used for the published panels is not recorded)
-schematic_ckpt: <SCHEMATIC_CKPT>
 
 # Job prefixes. "local" runs each job in the foreground (workflow/vendored/run_local.sh). On SLURM, e.g.
 #   slurm_gpu: "sbatch --wait -A <ACCOUNT> -p <GPU_PARTITION> --gres=gpu:1"

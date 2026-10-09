@@ -16,7 +16,6 @@ FIG = cfg_path("figures_dir")
 A_RES = cfg_path("a_results")
 CELLS = cfg_path("cells_results")
 SPARSE = cfg_path("cells_sparse_dir")
-COCOA_ROOT = cfg_path("cocoa_root")
 CELL_RUN = CELLS / "cells_scan_2M_a0.4_frontier/transformer/cb4096_cd16_nq16_a0.4_large"
 CLF = A_RES / "vqvae_scan/classifiers"
 CLF_RUNS = {  # Table 2 / Fig. 6a column order
@@ -198,20 +197,4 @@ rule figE12:
             --wrap="{PYTHON_BIN} {SCRIPTS}/make_cell_diagnostics.py --ckpt {CELL_RUN}/checkpoints/best.ckpt \
                 --test_path {SPARSE}/test --sparse --max_events 50000 --outdir {params.outdir} \
                 --title_extra '{CELL_DIAG_TITLE}'"
-        """
-
-
-rule fig3_schematic:
-    """Cell patching panels. The published input file, checkpoint and event are not recorded; the input is the
-    usage example from the script's docstring and the checkpoint is config key schematic_ckpt."""
-    output:
-        FIG / "cell_tokenization_schematic/overview.pdf",
-    params:
-        outdir=FIG / "cell_tokenization_schematic",
-        ckpt=lambda wc: cfg_path("schematic_ckpt"),
-    shell:
-        """
-        {PYTHON_BIN} {SCRIPTS}/make_tokenization_schematic.py \
-            --input {COCOA_ROOT}/train_topup2_20M_cells256/singlejet_270_100kseg_bw100.0.root \
-            --ckpt {params.ckpt} --layer 0 --outdir {params.outdir} --combined
         """
