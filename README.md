@@ -1,331 +1,173 @@
-# heptokens
-High-energy physics quantization and tokenization framework.
+# Precision Tokenization for Multi-Modal Data in High Energy Physics
 
-[![pytorch](https://img.shields.io/badge/-PyTorch-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![lightning](https://img.shields.io/badge/-Lightning-792EE5?logo=lightning&logoColor=white)](https://lightning.ai/)
-[![hydra](https://img.shields.io/badge/-Hydra-89b8cd?logo=hydra&logoColor=white)](https://hydra.cc/)
-[![wandb](https://img.shields.io/badge/-WandB-orange?logo=weightsandbiases&logoColor=white)](https://wandb.ai)
-[![pixi](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/prefix-dev/pixi/main/assets/badge/v0.json)](https://pixi.sh)
+This repository contains the code that reproduces the results of
 
-This repository is built around Hydra configs, Lightning training loops, and Pixi-managed environments.
+> J. Krupa, S. Klein, N. Kakati, D. Murnane, B. Hashemi, E. Gross, L. Heinrich, M. Kagan,
+> *Precision Tokenization for Multi-Modal Data in High Energy Physics*, `<arXiv/DOI placeholder>`.
 
-## Quick Start
-1. Install [Pixi](https://pixi.sh/latest/installation/).
-2. Clone the repo and `cd` to the top-level directory.
-3. Create/use the environment:
+**This is a frozen release, not a development repository.** The code has since been refactored into the
+[heptokens library](https://github.com/treasure-AmSC/heptokens) (conda package: `<conda package placeholder>`). New
+work, and any development, should use the library rather than this repository.
 
-```bash
-pixi shell
-```
-
-or run commands without entering a shell:
-
-```bash
-pixi run python scripts/train.py ...
-```
-
-To see a simple example that demonstrates the low level API take a look at```scripts/simple_demo.py```
-
-## Data
-
-The initial training datasets for this project have been taken from here: https://opendata.cern.ch/record/93940
-
-## Repository Layout
-- `scripts/`: entry points for training, preprocessing, plotting, and profiling.
-- `configs/`: Hydra config groups for models, callbacks, datamodules, and training defaults.
-- `src/heptokens/`: library code (models, dataloaders, callbacks, utilities).
-- `workflow/`: Snakemake workflows for larger experiment grids.
-- `profiles/`: Snakemake executor profiles (`local`, `s3df`/Slurm).
-
-## Data and Preprocessing
-Preprocessing files are required before normal training runs.
-
-The training config expects:
-- an input HDF5 jet dataset via `datamodule.data_path`
-- preprocessing transformers (`cst_fn`, `jet_fn`) for `preprocess_batch`
-
-Generate transformers with:
-
-```bash
-pixi run python scripts/get_preprocessing.py \
-  --file_path /path/to/dataset.h5 \
-  --num_jets 1000000 \
-  --cst_mode log_quantile \
-  --jet_mode log_quantile \
-  --output_dir /path/to/resources
-```
-
-Then pass transformer files into training:
-
-```bash
-datamodule.transforms.preprocess.cst_fn.filename=/path/to/cst_quantiles.joblib
-datamodule.transforms.preprocess.jet_fn.filename=/path/to/jet_quantiles.joblib
-```
-
-Important path note:
-- `configs/hydra/default.yaml` sets `hydra.job.chdir=true`, so relative paths can be resolved from the run directory (`<output_dir>/<project>/<network>`), not the repo root.
-- Prefer absolute transformer paths in CLI overrides.
-
-## First Run Sequence
-1. Build preprocessing transformers with `scripts/get_preprocessing.py`.
-2. Launch training with transformer paths passed via Hydra overrides.
-
-## Core Training Pattern
-All training is launched via `scripts/train.py` + Hydra overrides:
-
-```bash
-pixi run python scripts/train.py \
-  model=vqvae \
-  callbacks=encode \
-  datamodule=atlas_mappable \
-  project_name=my_project \
-  network_name=my_run \
-  output_dir=/path/to/results
-```
-
-Output structure is:
-
-`<output_dir>/<project_name>/<network_name>/`
-
-and includes checkpoints and `full_config.yaml` for reproducibility/resume.
-
-## Common Runs
-Train tokenizer (VQ-VAE):
-
-```bash
-pixi run python scripts/train.py \
-  model=vqvae callbacks=encode \
-  datamodule.num_jets=100000 \
-  trainer.max_epochs=30
-```
-
-Train classifier on raw features:
-
-```bash
-pixi run python scripts/train.py \
-  model=feature_classifier callbacks=classify \
-  trainer.max_epochs=30
-```
-
-Train classifier on learned tokens:
-
-```bash
-pixi run python scripts/train.py \
-  model=token_classifier callbacks=classify \
-  model.tokenizer_ckpt=/path/to/tokenizer/checkpoints/last.ckpt \
-  trainer.max_epochs=30
-```
-
-## W&B Logging
-The default logger is `WandbLogger` in `configs/train.yaml`.
-
-Useful overrides:
-
-```bash
-logger.entity=<your_username_or_team>
-logger.project=<project_name>
-logger.offline=true
-```
-
-## Resume Runs
-Use `full_resume=true` only if the previous run saved `full_config.yaml` in the expected run directory.
-This works best when the original run used an absolute `output_dir` and you reuse the same
-`output_dir`, `project_name`, and `network_name`.
-Also, ensure that `trainer.max_epochs` exceeds the current epoch.
-
-```bash
-pixi run python scripts/train.py \
-  full_resume=true \
-  ckpt_flag=last.ckpt \
-  output_dir=/path/to/results \
-  project_name=my_project \
-  network_name=my_run
-```
-
-If `full_resume` cannot find the prior config, resume directly from a checkpoint path:
-
-```bash
-pixi run python scripts/train.py \
-  full_resume=false \
-  ckpt_path=/abs/path/to/checkpoints/last.ckpt \
-  model=vqvae \
-  callbacks=encode \
-  output_dir=/path/to/results \
-  project_name=my_project \
-  network_name=my_run
-```
-
-## Snakemake Workflows
-End-to-end experiment workflows are in:
-- `workflow/Snakefile`
-- `workflow/preprocessing.smk`
-
-Run locally:
-
-```bash
-pixi run snakemake -s workflow/Snakefile --profile profiles/local
-```
-
-Run on Slurm:
-
-```bash
-pixi run snakemake -s workflow/Snakefile --profile profiles/s3df
-```
-
-
-## Hydra Reference
-Main training entry point:
-- `scripts/train.py`
-
-Top-level config:
-- `configs/train.yaml`
-
-Config groups:
-- `configs/model/*.yaml`
-- `configs/callbacks/*.yaml`
-- `configs/datamodule/*.yaml`
-- `configs/hydra/default.yaml`
-
-Hydra override pattern:
-- choose config groups: `model=vqvae callbacks=encode datamodule=atlas_mappable`
-- override scalar values: `trainer.max_epochs=30`
-- use `+key=value` only when adding a new key that does not already exist
-
-Common high-value overrides:
-
-```bash
-output_dir=/path/to/results project_name=my_project network_name=my_run
-logger.entity=<username_or_team>
-trainer.max_epochs=30 trainer.check_val_every_n_epoch=1
-datamodule.transforms.preprocess.cst_fn.filename=/path/to/cst_quantiles.joblib
-datamodule.transforms.preprocess.jet_fn.filename=/path/to/jet_quantiles.joblib
-```
-
-## Reconstruction Callback Settings
-For `callbacks=encode`, reconstruction monitoring is configured in `configs/callbacks/encode.yaml`. For `callbacks=classify`, monitoring is configured in `configs/callbacks/classify.yaml`.
-
-
-## Troubleshooting
-### DataLoader workers exit unexpectedly
-- start with `datamodule.num_workers=0` to confirm worker issue
-- set `datamodule.pin_memory=false` if worker shutdown/restart appears unstable
-- set `trainer.reload_dataloaders_every_n_epochs=0` to avoid costly per-epoch dataloader rebuild
-
-### Training becomes slow
-- set `trainer.reload_dataloaders_every_n_epochs=0`
-- tune `datamodule.num_workers`, `datamodule.batch_size`, `datamodule.pin_memory`
-- use `scripts/profile_dataloader.py` to profile dataloading throughput
-
-### W&B run lands under wrong account
-- set `logger.entity=<username_or_team>`
-
-### Debugger uses wrong Python interpreter
-- use `.vscode/launch.json`
-- set `"python": "${workspaceFolder}/.pixi/envs/default/bin/python"`
-
-## Reproducing the paper
-
-This section covers "Precision Tokenization for Multi-Modal Data in High Energy Physics". The JetSet, COCOA track and COCOA
-topocluster results were produced with the code in this repository. The calorimeter-cell tokenizer and the jet-pT
-regression were produced with a separate code base, now included here unchanged apart from imports and paths:
-
-| Origin | Location here |
-|---|---|
-| `heptokens` @ `73cb6ae` (`models/{vq_vae,coders,transformer,utils,vq_layers}.py`, `data/{base,collation}.py`, `callbacks/recon.py`) | `src/heptokens/vendored/{models,data,callbacks}/` |
-| `heptokens-cocoa` @ `cc20cbc` (`src/heptokens_cocoa/{data/hep4m_cell,data/cell_image_helper,data/cocoa_base,callbacks/cell_recon}.py`) | `src/heptokens/vendored/cocoa/` |
-| `heptokens-cocoa` @ `cc20cbc` scripts (cells, regression, Fig. 5/6b) | `scripts/vendored/` |
-| `heptokens-cocoa` @ `cc20cbc` cell configs | `configs/train_cell.yaml`, `configs/*/hep4m_cell*.yaml` |
-| `heptokens-cocoa` @ `cc20cbc` workflows | `workflow/vendored/*.smk` |
-
-The vendored model code is a different version of `heptokens.models` and is used only by the cell and regression
-code. Checkpoints written by that code pickle their encoder/decoder as `heptokens.models.*`; the vendored scripts load
-them inside `heptokens.vendored.b_module_names()`, which resolves those names to the vendored modules.
+## Setup
 
 ### Environment
 
+The environment is managed with [pixi](https://pixi.sh) and pinned in `pixi.lock`:
+
 ```bash
-pixi install                       # one environment for everything (pixi.lock)
-export WANDB_MODE=disabled         # or log in to W&B; training logs to W&B by default
+pixi install
+export WANDB_MODE=disabled   # training logs to Weights & Biases by default
 ```
+
+All commands below are run from the repository root with `pixi run ...`.
 
 ### Data
 
-- JetSet (ATLAS open data, flavour tagging): doi:[10.7483/OPENDATA.ATLAS.QG8W.TO8P](https://doi.org/10.7483/OPENDATA.ATLAS.QG8W.TO8P).
-  The JetSet scalers `resources/cst_quantiles.joblib` and `resources/jet_quantiles.joblib` are archived with the checkpoints.
-- COCOA single-jet samples ([Charkin-Gorbulin et al.](https://doi.org/10.1088/2632-2153/acf186)): the directories
-  `train_topup2_20M_cells256/`, `val_100K_cells256/` and `test_1M_cells256_isInfFalse/` of ROOT files. <COCOA_DATA_LOCATION>
-- Checkpoints, scan metric files and the cell test data: <ZENODO_DOI>. Unpack them so that the repo-A runs sit under
-  `results/` (`results/vqvae_scan/...`, `results/cocoa_scan/...`, `results/binning_baseline/...`), and point
-  `workflow/vendored/config.yaml` at the rest.
+- **JetSet** (ATLAS tt̄ simulation for ML-based jet flavour tagging), CERN Open Data Portal,
+  [doi:10.7483/OPENDATA.ATLAS.QG8W.TO8P](https://doi.org/10.7483/OPENDATA.ATLAS.QG8W.TO8P). The three HDF5 files
+  `mc-flavtag-ttbar-{small,medium,large}.h5` (about 200M jets in total).
+- **COCOA** single-jet samples ([Charkin-Gorbulin et al., Mach. Learn. Sci. Tech. 4 (2023) 035042](https://doi.org/10.1088/2632-2153/acf186)):
+  ROOT files in `train_topup2_20M_cells256/`, `val_100K_cells256/` and `test_1M_cells256_isInfFalse/`.
+  `<COCOA data location placeholder>`. The calorimeter-cell inputs are derived from these files by
+  `workflow/vendored/cells_preprocess.smk`.
 
-### Paths
+### Checkpoints
 
-New workflows read every path from `workflow/vendored/config.yaml` (placeholders `<...>`; or pass
-`--configfile my_paths.yaml`). Older files still hard-code the S3DF locations and must be edited to run elsewhere.
-Path roots: `/sdf/data/atlas/u/jkrupa/` (repo, results, 2M cell data), `/sdf/scratch/users/j/jkrupa/data/atlas/`
-(JetSet HDF5), `/fs/ddn/sdf/group/atlas/d/jkrupa/` (COCOA ROOT files, cell results), `/sdf/group/mli/samklein/`
-(old defaults). Files: `workflow/Snakefile`, `workflow/preprocessing.smk`, `configs/train.yaml`,
-`configs/datamodule/{atlas_iterable,atlas_iterable_multi,atlas_mappable,cocoa_topos,cocoa_tracks,cocoa_truthpart,token_npz}.yaml`,
-`configs/model/token_classifier.yaml`, `scripts/plot_design_rules.py` (`CELLS["dir"]`, the cell frontier),
-`scripts/codebook_vqvae_utilization.py`, `scripts/compare_roc.py`, `scripts/get_preprocessing.py`,
-`scripts/build_hep4m_preprocessed.py`, `scripts/export_cocoa_tokens_hep4m.py`, `scripts/fit_cocoa_truthpart_scaler.py`,
-`scripts/pflow_*.{py,sh}`, `scripts/copy_tokenizers_to_nersc.sh`, `scripts/simple_demo.py`, `tests/test_positions_out.py`.
+Trained tokenizers, classifiers and regressors, the preprocessing scalers (`resources/*.joblib`) and the stored test
+metrics are available at `<checkpoint archive placeholder>`. Unpack them so that the set-based runs sit under
+`results/` (`results/vqvae_scan/`, `results/cocoa_scan/`, `results/binning_baseline/`, ...), and point the
+`cells_results` and `regression_results` keys below at the cell and regression runs.
 
-### Training and evaluation
+### Site-specific paths
 
-| What | Command |
+The workflows in `workflow/vendored/` read every path from `workflow/vendored/config.yaml`. Copy it, fill in the
+`<...>` placeholders, and pass it with `--configfile my_paths.yaml`:
+
+| Key | Content |
 |---|---|
-| JetSet / COCOA track / topocluster scans and fast-path-off tests | `pixi run snakemake -s workflow/Snakefile all_nofp_test all_design_e100_nofp --profile profiles/s3df` |
+| `cocoa_root` | COCOA ROOT directories (see Data) |
+| `cells_h5_dir`, `cells_h5_2M_dir`, `cells_sparse_dir` | preprocessed calorimeter-cell data (20M, 2M, sparse) |
+| `cells_results` | calorimeter-cell runs |
+| `a_results` | set-based runs (normally `results`) |
+| `regression_results` | jet-pT regression tokens, regressors and evaluations |
+| `figures_dir` | output directory for figures and tables |
+| `slurm_gpu`, `slurm_cpu` | job prefix; `local` runs jobs in the foreground, otherwise e.g. `sbatch -p <partition> ...` |
+
+Older files hard-code the paths of the cluster the paper was produced on and must be edited to run elsewhere. Path
+roots: `/sdf/data/atlas/u/jkrupa/`, `/sdf/scratch/users/j/jkrupa/`, `/sdf/scratch/users/s/samklein/`,
+`/sdf/group/mli/samklein/`, `/fs/ddn/sdf/group/atlas/d/jkrupa/`, `/lscratch/`, `/global/cfs/`. Files:
+
+- `workflow/Snakefile`, `workflow/preprocessing.smk`
+- `configs/train.yaml`, `configs/model/token_classifier.yaml`,
+  `configs/datamodule/{atlas_iterable,atlas_iterable_multi,atlas_mappable,cocoa_topos,cocoa_tracks,cocoa_truthpart,token_npz}.yaml`
+- `scripts/plot_design_rules.py` (the cell-run directory, `CELLS["dir"]`), `scripts/compare_roc.py`,
+  `scripts/codebook_vqvae_utilization.py`, `scripts/get_preprocessing.py`, `scripts/build_hep4m_preprocessed.py`,
+  `scripts/export_cocoa_tokens_hep4m.py`, `scripts/fit_cocoa_truthpart_scaler.py`, `scripts/simple_demo.py`,
+  `scripts/pflow_*.{py,sh}`, `scripts/copy_tokenizers_to_nersc.sh`
+- `src/heptokens/data/token_npz.py`, `tests/test_positions_out.py`
+
+## Reproducing the paper
+
+Figures and tables are built by `workflow/vendored/paper_figures.smk`:
+
+```bash
+pixi run snakemake -s workflow/vendored/paper_figures.smk --configfile my_paths.yaml --cores 1 <target>
+```
+
+`all_figures` builds every target. In the table, `<F>` is `figures_dir` and `pf:` marks a target of
+`paper_figures.smk`. Runtimes are approximate, on CPU; the long CPU times were measured on a shared, heavily loaded
+node and are much shorter on a GPU. Figures built from stored metrics need only the checkpoint archive (no inference).
+
+| Paper | What it shows | Command | Output | Runtime | GPU |
+|---|---|---|---|---|---|
+| Fig. 1 | Jet resolution vs information fraction, all modalities, with fixed-binning baselines | `pf:fig1_fig4_figE10` | `<F>/design_rules/rate_distortion_pareto_with_cells_binning.pdf` | < 1 min | no |
+| Fig. 2 | Method overview | – | – | – | – |
+| Fig. 3 | Calorimeter-cell patching | illustrative; not produced by this code | – | – | – |
+| Table 1 | Selected tokenizer per modality: resolution and utilization | resolution: `pixi run snakemake -s workflow/Snakefile all_nofp_test` (set-based), `workflow/vendored/cells_frontier_2M.smk <cells_results>/cells_scan_2M_a0.4_frontier/transformer/cb4096_cd16_nq16_a0.4_large/test_metrics.json` (cells); utilization: `scripts/codebook_vqvae_utilization.py --run_dirs <JetSet run> --num_jets 50000 --output <csv>`, `scripts/cocoa_utilization_nofp.py compute` | `<run>/test_nofastpath/**/test_metrics.npz` (IQR/median of `pt_ratio`), cells `<run>/test_metrics.json`; utilization CSVs in `results/codebook_utilization/` | tracks 5 min, topoclusters 40 min, JetSet 3 h, cells 4 h, utilization 20 min–4 h | recommended |
+| Fig. 4 | Design rules (a)–(d) | `pf:fig1_fig4_figE10` | `<F>/design_rules/design_rules.pdf` | < 1 min | no |
+| Fig. 5 top | Regressed jet-pT resolution vs information fraction (tracks, topoclusters) | `pf:fig5_fig6b`; regressors: `pixi run snakemake -s workflow/vendored/{track,topo}_token_regression.smk all` | `<F>/rate_distortion/rate_distortion_cocoa.pdf` | plot < 1 min; regression scan: hours | regression training: yes |
+| Fig. 5 bottom | Particle-flow jet-pT resolution | produced in an external pipeline (nanoHEP) from tokens exported by this repository, see [Particle flow](#particle-flow-fig-5-bottom); plotted by `pf:fig5_fig6b` | `<F>/rate_distortion/rate_distortion_cocoa.pdf` | plot < 1 min | external pipeline: yes |
+| Fig. 6a | b-tagging ROC curves, tokenized vs continuous classifiers | `pf:fig6a` (from stored test predictions) | `<F>/roc/token_clf_scan_vs_refs_btag_roc.pdf` | 35 min | no |
+| Fig. 6b | Light-jet rejection vs information fraction | `pf:fig5_fig6b` | `<F>/rate_distortion/rate_distortion_jetset.pdf` | < 1 min | no |
+| Fig. 6c | t-SNE of the JetSet codebooks | not reproducible here: its input token export is no longer available | – | – | – |
+| Table 2 | Background rejection at 50% and 70% b-jet efficiency | `pf:table2` (from stored test predictions) | `<F>/tables/rejection_table.txt` | 3 min | no |
+| Table A.3 | Dataset summary | not produced by code | – | – | – |
+| Fig. B.7 | Illustration | illustrative; not produced by this code | – | – | – |
+| Fig. C.8 | MLP vs Transformer backbones, 1M and 10M training jets | `pf:figC8` | `<F>/mlp_vs_transformer/mlp_vs_transformer.pdf` | < 1 min | no |
+| Table C.4 | Jet resolution vs training-set size | `pf:tableC4` | `<F>/tables/table_c4.csv` | < 1 min | no |
+| Fig. D.9a, b, d | Codebook utilization heatmaps: COCOA tracks, topoclusters, JetSet | `pixi run python scripts/cocoa_utilization_nofp.py compute`, then `... plot` | `results/cocoa_scan/plots_nofp/{tracks,topos}/cocoa_utilization_heatmap.pdf`, `results/vqvae_scan/plots_nofp/jetset_utilization_heatmap.pdf` | compute: hours on CPU; plot < 1 min | compute: recommended |
+| Fig. D.9c | Codebook utilization, calorimeter cells | `pf:figD9c` | `<F>/cell_utilization/plots/util_vs_nq_transformer_large.pdf` | < 1 min | no |
+| Fig. E.10 | As Fig. 1, with normalized MAE | `pf:fig1_fig4_figE10` | `<F>/design_rules/rate_distortion_pareto_mae_mean_with_binning.pdf` | < 1 min | no |
+| Fig. E.11 | Feature correlations and residuals, selected track and topocluster tokenizers | `pf:` the two output files | `<F>/selected_2d_correlation/cocoa_{tracks_cb4096_cd8_nq3,topos_cb4096_cd8_nq6}.pdf` | < 1 min | no |
+| Fig. E.12 | Calorimeter-cell energy and occupancy reconstruction | `pf:figE12` | `<F>/cell_diagnostics/cell_diagnostics.pdf` | 45 min (50k events) | recommended |
+
+The published Fig. D.9a, b show Q = 2, 3, 4. The plot step adds a Q = 6 panel if
+`results/codebook_utilization/cocoa_utilization_nofp_q6.csv` (from `cocoa_utilization_nofp.py compute_q6`) exists.
+
+Fixed-binning baselines for Figs. 1 and E.10 (`pf:` targets): `<a_results>/binning_baseline/{tracks,topos,jetset}/binning_uniform_K<K>/test_metrics/test_metrics.npz`
+and `<a_results>/binning_baseline/cells/binning_uniform_K<K>/test_metrics.json`.
+
+### Training
+
+Training needs a GPU. The commands below retrain the stored checkpoints:
+
+| Runs | Command |
+|---|---|
+| JetSet, COCOA track and topocluster scans; fast-path-off tests | `pixi run snakemake -s workflow/Snakefile all_nofp_test all_design_e100_nofp --profile profiles/s3df` |
 | Dataset-size scans (Table C.4) | `pixi run snakemake -s workflow/Snakefile all_datascan_nofp --profile profiles/s3df` |
 | Classifiers (Fig. 6, Table 2) | `pixi run snakemake -s workflow/Snakefile compare_roc_scan --profile profiles/s3df` |
-| Cell preprocessing (2M and 20M sets) | `pixi run snakemake -s workflow/vendored/cells_preprocess.smk all_cells_20M_sparse --cores 100` |
-| Cell frontier, 2M events (Fig. 1, Table 1, Fig. D.9c) | `pixi run snakemake -s workflow/vendored/cells_frontier_2M.smk all_frontier --cores 24` |
-| Cells, 20M events (Table C.4) | `pixi run snakemake -s workflow/vendored/cells_20M.smk full_qscan_eval --cores 2` |
-| Jet-pT regression (Fig. 5 top) | `pixi run snakemake -s workflow/vendored/{track,topo}_token_regression.smk all --cores 16` |
+| Calorimeter-cell preprocessing | `pixi run snakemake -s workflow/vendored/cells_preprocess.smk all_cells_20M_sparse --configfile my_paths.yaml` |
+| Calorimeter-cell scan, 2M events | `pixi run snakemake -s workflow/vendored/cells_frontier_2M.smk all_frontier --configfile my_paths.yaml` |
+| Calorimeter cells, 20M events (Table C.4) | `pixi run snakemake -s workflow/vendored/cells_20M.smk full_qscan_eval --configfile my_paths.yaml` |
+| Jet-pT regression (Fig. 5 top) | `pixi run snakemake -s workflow/vendored/{track,topo}_token_regression.smk all --configfile my_paths.yaml` |
 
-Set `slurm_gpu` / `slurm_cpu` in `workflow/vendored/config.yaml` to submit the vendored workflows to SLURM.
-
-### Figures and tables
-
-All commands below are `pixi run snakemake -s workflow/vendored/paper_figures.smk <target> --cores 1`, where `<F>` is
-`figures_dir`. `all_figures` builds everything that has a script.
-
-| Paper | Target / command | Notes |
-|---|---|---|
-| Fig. 1 | `<F>/design_rules/rate_distortion_pareto_with_cells_binning.pdf` | `scripts/plot_design_rules.py --e100`; binning baselines: rules `binning_baseline`, `binning_baseline_cells` |
-| Fig. 2 | – | drawing, no code |
-| Fig. 3 | – | illustrative; not reproduced by this code |
-| Table 1 | metric files | JetSet/tracks/topos: `<run>/test_nofastpath/**/test_metrics.npz` (IQR/median of `pt_ratio`) and `results/codebook_utilization/{jetset_utilization,cocoa_utilization_nofp,cocoa_utilization_nofp_q6}.csv`; cells: `test_metrics.json` (`energy_resolution_iqr`, `codebook_util_avg`) |
-| Fig. 4 | `<F>/design_rules/design_rules.pdf` | same command as Fig. 1 |
-| Fig. 5 | `<F>/rate_distortion/rate_distortion_cocoa.pdf` | `scripts/vendored/plot_rate_distortion.py`; values are literals (regression: `<regression_results>/*_regression_results.csv`; particle flow: nanoHEP, see below) |
-| Fig. 6a | `<F>/roc/token_clf_scan_vs_refs_btag_roc.pdf` | `scripts/compare_roc.py` (as rule `compare_roc_scan`) |
-| Fig. 6b | `<F>/rate_distortion/rate_distortion_jetset.pdf` | literals in `scripts/vendored/plot_rate_distortion.py` |
-| Fig. 6c | – | not reproduced: its input token export is no longer available |
-| Table 2 | `<F>/tables/rejection_table.txt` | `scripts/rejection_table.py` |
-| Table A.3 | – | no code |
-| Fig. B.7 | – | illustrative; not reproduced by this code |
-| Fig. C.8 | `<F>/mlp_vs_transformer/mlp_vs_transformer.pdf` | `scripts/compare_mlp_transformer.py` (reads `test/`, fast path on) |
-| Table C.4 | metric files | `results/cocoa_scan/{tracks,topos}_datascan/*/test_nofastpath`, JetSet `*_nj1000000` / `*_nj10000000`, cells `cells_scan_2M_a0.4_frontier` and `cells_20M/full`; no table script |
-| Fig. D.9a, b, d | `pixi run python scripts/cocoa_utilization_nofp.py compute && ... plot` | fixed outputs under `results/`; the published (a), (b) have Q = 2, 3, 4 panels (no `cocoa_utilization_nofp_q6.csv`) |
-| Fig. D.9c | `<F>/cell_utilization/plots/util_vs_nq_transformer_large.pdf` | `scripts/vendored/make_cell_utilization.py` |
-| Fig. E.10 | `<F>/design_rules/rate_distortion_pareto_mae_mean_with_binning.pdf` | same command as Fig. 1 |
-| Fig. E.11 | `<F>/selected_2d_correlation/cocoa_{tracks_cb4096_cd8_nq3,topos_cb4096_cd8_nq6}.pdf` | `scripts/plot_2d_correlation.py` |
-| Fig. E.12 | `<F>/cell_diagnostics/cell_diagnostics.pdf` | `scripts/vendored/make_cell_diagnostics.py` |
+`profiles/s3df` is the SLURM profile of the cluster the paper was produced on; adapt it, or use `--cores N` to run
+locally.
 
 ### Particle flow (Fig. 5, bottom)
 
-The particle-flow model was trained and evaluated outside this repository, with nanoHEP (`FM-for-HEP/hep-any2any`)
-at NERSC, following `docs/nanohep_pflow_handoff.md` on branch `feature/cocoa-dataloader`. Its inputs from this
-repository are the tokenizers `results/cocoa_scan/{tracks,topos}_e100/cocoa_{tracks,topos}{,_posout}_cb{256,1024,4096}_cd8_nq4_lr0.001_e100`
-and `results/cocoa_scan/truthpart/cocoa_truthpart_cb128_cd8_nq3_lr0.001`, the scalers in `resources/`, and the token
-stores built with `scripts/build_hep4m_preprocessed.py` (adapted at NERSC as described in the runbook). The plotted
-values are literals in `scripts/vendored/plot_rate_distortion.py`.
+The particle-flow model was trained and evaluated outside this repository, with nanoHEP. Its inputs are token stores
+exported by this repository from the tokenizers `results/cocoa_scan/{tracks,topos}_e100/cocoa_{tracks,topos}{,_posout}_cb{256,1024,4096}_cd8_nq4_lr0.001_e100`
+and the truth-particle tokenizer `results/cocoa_scan/truthpart/cocoa_truthpart_cb128_cd8_nq3_lr0.001`:
 
-## Resources
-- [Pixi documentation](https://pixi.sh/)
-- [Snakemake documentation](https://snakemake.readthedocs.io/en/stable/)
-- [Reproducible Machine Learning Workflows for Scientists, Matthew Feickert, 2025](https://carpentries-incubator.github.io/reproducible-ml-workflows/)
-- [Good ML project structure](https://github.com/mattcleigh/JetSSL-Lite/tree/master)
+```bash
+pixi run python scripts/build_hep4m_preprocessed.py --data_dir <cocoa_root> \
+    --split_dir train_topup2_20M_cells256 --split_name train --output_dir <token store> \
+    --track_ckpt <track tokenizer>/checkpoints/best.ckpt \
+    --topo_ckpt <topocluster tokenizer>/checkpoints/best.ckpt \
+    --truthpart_ckpt results/cocoa_scan/truthpart/cocoa_truthpart_cb128_cd8_nq3_lr0.001/checkpoints/best.ckpt
+```
 
-## Contributors
-Jeffrey Krupa, Samuel Klein, Michael Kagan
+Repeat for `val_100K_cells256` / `val` and `test_1M_cells256_isInfFalse` / `test`. This script writes positions-in
+token stores. The positions-out stores, which append three position tokens per object from a fixed binning with
+1024 bins, and the streaming export of the full training set were produced with an adapted version of the script in
+the external pipeline. The plotted particle-flow values are literals in `scripts/vendored/plot_rate_distortion.py`.
+
+## Repository layout
+
+- `src/heptokens/`: the original code. It produced the set-based results (JetSet, COCOA tracks and topoclusters):
+  tokenizers, classifiers, data modules and callbacks.
+- `src/heptokens/vendored/`: a copy of the later, refactored library code. It is used only for the
+  calorimeter-cell tokenizer and the jet-pT regression; the scripts in `scripts/vendored/`, the configs
+  `configs/train_cell.yaml` and `configs/*/hep4m_cell*.yaml`, and the workflows in `workflow/vendored/` use it.
+  Checkpoints written by that code store their model classes under `heptokens.models`; the vendored scripts load them
+  inside `heptokens.vendored.b_module_names()`, which maps those names to the vendored modules.
+- `scripts/`, `configs/`, `workflow/`: entry points, Hydra configs and Snakemake workflows for the set-based results.
+  `scripts/train.py` trains every tokenizer (`-cn train_cell` for the calorimeter cells).
+
+## Citation
+
+```bibtex
+@article{<citation key placeholder>,
+  title   = {Precision Tokenization for Multi-Modal Data in High Energy Physics},
+  author  = {Krupa, J. and Klein, S. and Kakati, N. and Murnane, D. and Hashemi, B. and Gross, E. and Heinrich, L. and Kagan, M.},
+  journal = {<placeholder>},
+  year    = {<placeholder>},
+  eprint  = {<placeholder>},
+}
+```
+
+## License
+
+`<license placeholder>`
