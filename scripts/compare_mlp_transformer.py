@@ -62,13 +62,13 @@ RUNS = {
 # ---------------------------------------------------------------------------
 # Metric helpers
 # ---------------------------------------------------------------------------
-def find_npz(scan_dir: Path, run_name: str) -> Path | None:
+def find_npz(scan_dir: Path, run_name: str, test_dir: str = "test") -> Path | None:
     """Locate test_metrics.npz — handles both flat and nested output layouts."""
     for candidate in [
-        scan_dir / run_name / "test" / "test_metrics" / "test_metrics.npz",
+        scan_dir / run_name / test_dir / "test_metrics" / "test_metrics.npz",
         # nested: output_dir=results/vqvae_scan, project=vqvae_scan → double-dir
-        scan_dir / run_name / "test" / "results" / "vqvae_scan" / run_name
-        / "test" / "test_metrics" / "test_metrics.npz",
+        scan_dir / run_name / test_dir / "results" / "vqvae_scan" / run_name
+        / test_dir / "test_metrics" / "test_metrics.npz",
     ]:
         if candidate.exists():
             return candidate
@@ -157,7 +157,9 @@ def main():
         for ri, enc in enumerate(SIZES):
             for ci, nj in enumerate(N_JETS):
                 run_name, _ = run_map[(enc, nj)]
-                npz = find_npz(scan_dir, run_name)
+                # Transformers: fused-MHA fast path off, as in Table 1 / Table C.4 (MLPs have no attention).
+                test_dir = "test_nofastpath" if arch_label == "Transformer" else "test"
+                npz = find_npz(scan_dir, run_name, test_dir)
                 if npz is None:
                     print(f"  [MISSING] {run_name}")
                     continue
