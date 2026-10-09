@@ -294,16 +294,16 @@ All commands below are `pixi run snakemake -s workflow/vendored/paper_figures.sm
 |---|---|---|
 | Fig. 1 | `<F>/design_rules/rate_distortion_pareto_with_cells_binning.pdf` | `scripts/plot_design_rules.py --e100`; binning baselines: rules `binning_baseline`, `binning_baseline_cells` |
 | Fig. 2 | – | drawing, no code |
-| Fig. 3 | `<F>/cell_tokenization_schematic/overview.pdf` | `scripts/vendored/make_tokenization_schematic.py`; published input/checkpoint/event not recorded |
+| Fig. 3 | – | illustrative; not reproduced by this code |
 | Table 1 | metric files | JetSet/tracks/topos: `<run>/test_nofastpath/**/test_metrics.npz` (IQR/median of `pt_ratio`) and `results/codebook_utilization/{jetset_utilization,cocoa_utilization_nofp,cocoa_utilization_nofp_q6}.csv`; cells: `test_metrics.json` (`energy_resolution_iqr`, `codebook_util_avg`) |
 | Fig. 4 | `<F>/design_rules/design_rules.pdf` | same command as Fig. 1 |
 | Fig. 5 | `<F>/rate_distortion/rate_distortion_cocoa.pdf` | `scripts/vendored/plot_rate_distortion.py`; values are literals (regression: `<regression_results>/*_regression_results.csv`; particle flow: nanoHEP, see below) |
 | Fig. 6a | `<F>/roc/token_clf_scan_vs_refs_btag_roc.pdf` | `scripts/compare_roc.py` (as rule `compare_roc_scan`) |
 | Fig. 6b | `<F>/rate_distortion/rate_distortion_jetset.pdf` | literals in `scripts/vendored/plot_rate_distortion.py` |
-| Fig. 6c | `<F>/tsne/codebook_tsne_by_flavor.pdf` | needs the token export of the (32768, 8, 4) tokenizer (`workflow/Snakefile`, `tokenized/...npz`) |
+| Fig. 6c | – | not reproduced: its input token export is no longer available |
 | Table 2 | `<F>/tables/rejection_table.txt` | `scripts/rejection_table.py` |
 | Table A.3 | – | no code |
-| Fig. B.7 | – | no script found |
+| Fig. B.7 | – | illustrative; not reproduced by this code |
 | Fig. C.8 | `<F>/mlp_vs_transformer/mlp_vs_transformer.pdf` | `scripts/compare_mlp_transformer.py` (reads `test/`, fast path on) |
 | Table C.4 | metric files | `results/cocoa_scan/{tracks,topos}_datascan/*/test_nofastpath`, JetSet `*_nj1000000` / `*_nj10000000`, cells `cells_scan_2M_a0.4_frontier` and `cells_20M/full`; no table script |
 | Fig. D.9a, b, d | `pixi run python scripts/cocoa_utilization_nofp.py compute && ... plot` | fixed outputs under `results/`; the published (a), (b) have Q = 2, 3, 4 panels (no `cocoa_utilization_nofp_q6.csv`) |

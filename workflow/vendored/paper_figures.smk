@@ -42,7 +42,6 @@ rule all_figures:
         FIG / "rate_distortion/rate_distortion_cocoa.pdf",  # Fig. 5
         FIG / "rate_distortion/rate_distortion_jetset.pdf",  # Fig. 6b
         FIG / "roc/token_clf_scan_vs_refs_btag_roc.pdf",  # Fig. 6a
-        FIG / "tsne/codebook_tsne_by_flavor.pdf",  # Fig. 6c
         FIG / "tables/rejection_table.txt",  # Table 2
         FIG / "mlp_vs_transformer/mlp_vs_transformer.pdf",  # Fig. C.8
         FIG / "cell_utilization/plots/util_vs_nq_transformer_large.pdf",  # Fig. D.9c
@@ -109,18 +108,6 @@ rule fig6a:
             --run_labels cb1024_nq3 cb1024_nq4 cb8192_nq4 token_clf_full_v2 feature_clf_full_v3 \
             --output_dir {params.outdir} --output_name token_clf_scan_vs_refs
         """
-
-
-rule fig6c:
-    input:
-        A_RES / "vqvae_scan/tokenized/transformer_vqvae_enc_large_cb32768_cd8_nq4_lr0.0003_cw1.0_nj10000000"
-        / "mc-flavtag-ttbar-small.npz",
-    output:
-        FIG / "tsne/codebook_tsne_by_flavor.pdf",
-    params:
-        outdir=FIG / "tsne",
-    shell:
-        "{PYTHON_BIN} scripts/codebook_tsne.py --npz {input} --output_dir {params.outdir}"
 
 
 rule table2:
