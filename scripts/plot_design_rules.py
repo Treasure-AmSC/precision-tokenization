@@ -72,6 +72,7 @@ CELLS = dict(
     color="#9467bd", D=64, slug="cells",
     dir=Path("/fs/ddn/sdf/group/atlas/d/jkrupa/cocoa_results/cells_scan_2M_a0.4_frontier/transformer"),
 )
+CELLS_Q_MAX = 16  # cell runs with Q > 16 are not part of the paper
 
 
 def load_cells():
@@ -81,6 +82,8 @@ def load_cells():
             print(f"  cells: no test_metrics.json yet: {run.name}")
             continue
         m = json.loads((run / "test_metrics.json").read_text())
+        if int(m["nq"]) > CELLS_Q_MAX:
+            continue
         runs[(int(m["cb"]), int(m["cd"]), int(m["nq"]), "in")] = [float(m["energy_resolution_iqr"])]
     return runs
 
@@ -121,7 +124,7 @@ def load_cells_mae():
         if f.parent.name.startswith("binning_uniform_K"):
             if m["cb"] >= BINNING_K_MIN:
                 binning.append((m["information_fraction"], m["normalized_mae"]))
-        else:
+        elif m["nq"] <= CELLS_Q_MAX:
             runs[(m["cb"], m["cd"], m["nq"], "in")] = [m["normalized_mae"]]
     return runs, sorted(binning)
 

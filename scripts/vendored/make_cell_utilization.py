@@ -20,6 +20,7 @@ HEATMAP = Path(__file__).resolve().parents[1] / "plot_utilization_heatmaps.py"
 OUT = None  # --outdir
 N_TRAIN = 2_000_000
 LR = 0.0003
+Q_MAX = 16  # cell runs with Q > 16 are not part of the paper
 
 
 def build_csv(path: Path) -> int:
@@ -27,6 +28,8 @@ def build_csv(path: Path) -> int:
     for m_path in sorted(SCAN.glob("*/test_metrics.json")):
         m = json.loads(m_path.read_text())
         cb, cd, nq = int(m["cb"]), int(m["cd"]), int(m["nq"])
+        if nq > Q_MAX:
+            continue
         row = {
             # Name follows the plotter's parse_run_details() conventions.
             "run": f"transformer_vqvae_enc_large_cb{cb}_cd{cd}_nq{nq}_lr{LR}_cw1.0_nj{N_TRAIN}",
