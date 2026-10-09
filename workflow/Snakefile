@@ -8,9 +8,9 @@ output_dir      = WORKSPACE / "results" / "long_run"
 scan_output_dir = WORKSPACE / "results" / "vqvae_scan"
 
 # ── SLURM settings ───────────────────────────────────────────────────────────
-# Account/partition are overridable, e.g.:
-#   --config slurm_account=atlas:compef@ampere slurm_partition=ampere
-SLURM_ACCOUNT = config.get("slurm_account", "mli:diffpg@ampere")
+# Set your account (and GPU partition), e.g.:
+#   --config slurm_account=my_account slurm_partition=gpu
+SLURM_ACCOUNT = config.get("slurm_account", "<your_account>")
 SLURM_PARTITION = config.get("slurm_partition", "ampere")
 SLURM = f"sbatch --wait -A {SLURM_ACCOUNT} -p {SLURM_PARTITION} -t 7000 --mem=100G --gres=gpu:1 -D {WORKSPACE}"
 
@@ -434,7 +434,7 @@ rule extract_token_sidecars:
         npz = lambda wc: token_clf_sizes[wc.size],
         # Streaming extraction is RAM-light (~hundreds of MB); disk is the constraint
         # (the large indices sidecar is ~54 GB), so request modest memory and short time.
-        slurm = f"sbatch --wait -A mli:diffpg@ampere -p ampere -t 2000 --mem=16G --gres=gpu:1 -D {WORKSPACE}",
+        slurm = f"sbatch --wait -A {SLURM_ACCOUNT} -p {SLURM_PARTITION} -t 2000 --mem=16G --gres=gpu:1 -D {WORKSPACE}",
     wildcard_constraints:
         size = "|".join(token_clf_sizes),
     shell:
@@ -534,7 +534,7 @@ token_clf_full_network = {
 TOKEN_CLF_FULL_NET = " ".join(f"model.{k}={v}" for k, v in token_clf_full_network.items())
 # Extra CPUs for the token dataloader workers (on-the-fly z_q reconstruction is CPU-bound;
 # the base SLURM has no --cpus-per-task, which starves the GPU at num_workers>1).
-TOKEN_CLF_FULL_SLURM = f"sbatch --wait -A mli:diffpg@ampere -p ampere -t 7000 --mem=100G --gres=gpu:1 --cpus-per-task=16 -D {WORKSPACE}"
+TOKEN_CLF_FULL_SLURM = f"sbatch --wait -A {SLURM_ACCOUNT} -p {SLURM_PARTITION} -t 7000 --mem=100G --gres=gpu:1 --cpus-per-task=16 -D {WORKSPACE}"
 
 # Optional suffix to fork a parallel run into its own output dir + wandb run WITHOUT
 # clobbering an in-progress job (e.g. `--config run_suffix=_v2`). Empty = default names.
@@ -664,7 +664,7 @@ rule export_tokens_scan:
     params:
         h5_path = lambda wc: TOKENIZE_H5_FILES[wc.split],
         output_dir = lambda wc: group_token_dir(wc.tok_model),
-        slurm = f"sbatch --wait -A mli:diffpg@ampere -p ampere -t 7000 --mem=100G --gres=gpu:1 --cpus-per-task=8 -D {WORKSPACE}",
+        slurm = f"sbatch --wait -A {SLURM_ACCOUNT} -p {SLURM_PARTITION} -t 7000 --mem=100G --gres=gpu:1 --cpus-per-task=8 -D {WORKSPACE}",
     wildcard_constraints:
         tok_model = "[^/]+",
         split = "small|medium|large",
@@ -703,7 +703,7 @@ rule extract_token_sidecars_scan:
     output:
         marker = GROUP_TOKEN_DIR + "/{tok_model}/mc-flavtag-ttbar-{size}_npy/EXTRACT_SUCCESS.txt",
     params:
-        slurm = f"sbatch --wait -A mli:diffpg@ampere -p ampere -t 2000 --mem=16G --gres=gpu:1 -D {WORKSPACE}",
+        slurm = f"sbatch --wait -A {SLURM_ACCOUNT} -p {SLURM_PARTITION} -t 2000 --mem=16G --gres=gpu:1 -D {WORKSPACE}",
         log_dir = lambda wc: group_token_dir(wc.tok_model),
     wildcard_constraints:
         tok_model = "[^/]+",
@@ -892,7 +892,7 @@ FEATURE_CLF_FULL_NET = TOKEN_CLF_FULL_NET
 # Default training length (overridable via --config feature_clf_full_max_epochs=N).
 FEATURE_CLF_FULL_MAX_EPOCHS = config.get("feature_clf_full_max_epochs", 30)
 # SLURM with extra CPUs for the streaming dataloader workers (mirrors tokenize_dataset).
-FEATURE_CLF_FULL_SLURM = f"sbatch --wait -A mli:diffpg@ampere -p ampere -t 7000 --mem=100G --gres=gpu:1 --cpus-per-task=8 -D {WORKSPACE}"
+FEATURE_CLF_FULL_SLURM = f"sbatch --wait -A {SLURM_ACCOUNT} -p {SLURM_PARTITION} -t 7000 --mem=100G --gres=gpu:1 --cpus-per-task=8 -D {WORKSPACE}"
 
 rule all_feature_classifier_full:
     input:
@@ -2031,7 +2031,7 @@ rule tokenize_dataset:
     params:
         h5_path = lambda wc: TOKENIZE_H5_FILES[wc.split],
         output_dir = lambda wc: str(scan_output_dir / "tokenized" / wc.tok_model),
-        slurm = f"sbatch --wait -A mli:diffpg@ampere -p ampere -t 7000 --mem=100G --gres=gpu:1 --cpus-per-task=8 -D {WORKSPACE}",
+        slurm = f"sbatch --wait -A {SLURM_ACCOUNT} -p {SLURM_PARTITION} -t 7000 --mem=100G --gres=gpu:1 --cpus-per-task=8 -D {WORKSPACE}",
     wildcard_constraints:
         tok_model = "[^/]+",
         split = "small|medium|large",
@@ -2388,8 +2388,8 @@ for cb, cd in [(64, 4), (256, 2), (256, 4), (1024, 2), (1024, 4)]:
     design_tracks[f"cocoa_tracks_cb{cb}_cd{cd}_nq3_lr0.001_e50"] = _design("recipe", "tracks_e50", cb, cd, 3, COCOA_CST_FN)
 
 # ── Design-figure panels (a), (b), (d) at d = 8, trained to convergence: 100 epochs, cosine over all 100,
-# early stopping effectively off (patience = max_epochs). Jobs are spread over accounts; topo on turing,
-# tracks on ampere unless --config e100_tracks_partition=turing.
+# early stopping effectively off (patience = max_epochs). Topo on turing, tracks on ampere unless
+# --config e100_tracks_partition=turing.
 E100_EPOCHS = 100
 
 def _sbatch(account, partition, mem):
@@ -2399,10 +2399,10 @@ def _sbatch(account, partition, mem):
     return s
 
 _E100_SLURM = {
-    "ampere": itertools.cycle([_sbatch(a, "ampere", "100G") for a in ("mli:diffpg@ampere", "atlas:compef@ampere", "atlas:usatlas@ampere")]),
-    "turing": itertools.cycle([_sbatch(a, "turing", "90G") for a in ("mli:diffpg@turing", "atlas:compef@turing")]),
+    "ampere": itertools.cycle([_sbatch(SLURM_ACCOUNT, "ampere", "100G")]),
+    "turing": itertools.cycle([_sbatch(SLURM_ACCOUNT, "turing", "90G")]),
 }
-_E100_TEST_SLURM = _sbatch("mli:diffpg@turing", "turing", "90G")
+_E100_TEST_SLURM = _sbatch(SLURM_ACCOUNT, "turing", "90G")
 _E100_TRACKS_PART = config.get("e100_tracks_partition", "ampere")
 _E100_POSIN = [(4096, nq) for nq in (2, 3, 4, 6, 8)] + [(cb, 4) for cb in (64, 256, 1024)]
 

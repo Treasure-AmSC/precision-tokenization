@@ -50,6 +50,11 @@ Details:
   - Large Transformer, learning rate 3·10⁻⁴, commitment weight 1, batch size 1024, seed 42.
   - 10M jets are loaded from the medium file and split 70/15/15, so each tokenizer trains on 7M jets.
   - Up to 200 epochs, with early stopping after 20 epochs without improvement in the validation loss.
+- **Expected result:** with K = 32768, d = 8, Q = 4 the jet pT resolution comes out at about 0.8% (Table 1; the
+  other modalities are listed there too).
+- **Compute:** training one JetSet tokenizer on 7M jets takes about 60 A100-hours with the Large Transformer and
+  about 50 with the Medium one, i.e. two to three days on one GPU. The default grid (35 tokenizers) is about
+  2,000 A100-hours. On 0.7M jets (Table C.4) one Large tokenizer takes about 20 A100-hours.
 - **Default grid:** the paper's, K ∈ {1024, 8192, 16384, 32768}, d ∈ {2, 4, 8, 16}, Q ∈ {3, 4}, plus additional scan Q ∈ {2, 6, 8} at (K, d) = (32768, 8).
 - **Changing the grid:** the configuration is at the top of the file. Change the grid with
   `--config 'grid={"K": [...], "d": [...], "Q": [...]}'`, filling in the desired K, d, Q values.  A commented tiny grid there is a quick first pass.
@@ -147,6 +152,13 @@ hard-coded. Path roots:
 
 What to change:
 
+- **Slurm account:** `workflow/Snakefile` and `profiles/s3df/config.yaml` have the placeholder `<your_account>`.
+  Pass `--config slurm_account=... slurm_partition=...` or edit them. The `workflow/vendored/*.smk` workflows take
+  their job prefix (`slurm_gpu`, `slurm_cpu`) from your copy of `workflow/vendored/config.yaml`.
+- **PBS or HTCondor:** the rules submit with `sbatch --wait ... --wrap="..."`. Replace these prefixes with your
+  scheduler's blocking submit command (for example `qsub -W block=true` on PBS). Alternatively set `slurm_gpu`
+  and `slurm_cpu` to `local` to run the vendored workflows inside one batch job. `workflow/Snakefile_simple`
+  needs no change: run it with the Snakemake executor plugin for your scheduler.
 - **JetSet scans:** in `workflow/Snakefile`, `WORKSPACE` (top of the file) and the JetSet file paths
   (`/sdf/scratch/...`).
 - **Training defaults:** `configs/train.yaml` (`output_dir`), `configs/datamodule/atlas_mappable.yaml` and

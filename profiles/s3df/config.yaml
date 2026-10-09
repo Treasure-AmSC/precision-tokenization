@@ -7,7 +7,7 @@ restart-times: 0
 rerun-incomplete: true
 rerun-triggers: mtime
 default-resources:
-  - slurm_account=mli:bax@turing
+  - slurm_account=<your_account>
   - slurm_partition=turing
   - runtime=540
   - mem_mb=32000
