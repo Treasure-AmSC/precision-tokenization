@@ -2821,9 +2821,12 @@ def _nofp_lookup(project, grid, cst_fn, name, design, recon_idx="", ckpt_overrid
     return {**stored, **design}
 
 # Stored runs whose checkpoints sit in a nested results/ dir (the path their stored test used).
+# Fresh runs (e.g. from all_paper_scan) write the standard path, so only existing nested paths are used.
 _JETSET_NESTED_CKPT = {
-    n: str(scan_output_dir / "vqvae_scan" / n / "results/vqvae_scan/vqvae_scan" / n / "checkpoints/best.ckpt")
-    for n in (_jetset_name(32768, 2, 4), _jetset_name(32768, 4, 4))
+    n: p for n, p in (
+        (n, str(scan_output_dir / "vqvae_scan" / n / "results/vqvae_scan/vqvae_scan" / n / "checkpoints/best.ckpt"))
+        for n in (_jetset_name(32768, 2, 4), _jetset_name(32768, 4, 4))
+    ) if Path(p).exists()
 }
 
 nofp_datascan_jetset = {
@@ -3045,3 +3048,65 @@ rule all_design_e100_nofp:
     input:
         _design_targets(design_tracks, cocoa_output_dir, NOFP_MARKER, ["e100"]),
         _design_targets(design_topos, cocoa_output_dir, NOFP_MARKER, ["e100"]),
+
+# ── The paper's JetSet (K, d, Q) grid (Fig. 1, Fig. 4, Table 1 JetSet row) ──
+# all_paper_scan trains it, all_paper_scan_test evaluates it (fast path off, rule test_nofp_jetset).
+# Points that train_tokenizer or train_design_jetset already build are left to those rules.
+PAPER_JETSET_GRID = list(product([1024, 8192, 16384, 32768], [2, 4, 8, 16], [3, 4])) + [(32768, 8, q) for q in (2, 6, 8)]
+paper_jetset_lookup = {_jetset_name(cb, cd, nq): dict(cb=cb, cd=cd, nq=nq) for cb, cd, nq in PAPER_JETSET_GRID}
+_paper_jetset_new = [n for n in paper_jetset_lookup if n not in scan_lookup and n not in design_jetset]
+
+localrules: all_paper_scan, all_paper_scan_test, train_paper_jetset
+
+rule all_paper_scan:
+    input:
+        [str(scan_output_dir / "vqvae_scan" / n / "SUCCESS.txt") for n in paper_jetset_lookup],
+
+rule all_paper_scan_test:
+    input:
+        [str(scan_output_dir / "vqvae_scan" / n / NOFP_MARKER) for n in paper_jetset_lookup],
+
+rule train_paper_jetset:
+    """Same command as train_design_jetset (the recipe of every JetSet tokenizer in the paper)."""
+    output:
+        scan_output_dir / "vqvae_scan/{paper_name}/SUCCESS.txt",
+        ckpt = scan_output_dir / "vqvae_scan/{paper_name}/checkpoints/best.ckpt",
+    params:
+        output_dir = scan_output_dir,
+        codebook_size = lambda wc: paper_jetset_lookup[wc.paper_name]["cb"],
+        codebook_dim = lambda wc: paper_jetset_lookup[wc.paper_name]["cd"],
+        num_quantizers = lambda wc: paper_jetset_lookup[wc.paper_name]["nq"],
+        slurm = DESIGN_SLURM,
+    wildcard_constraints:
+        paper_name = "|".join(re.escape(n) for n in _paper_jetset_new),
+    shell:
+        """
+        {params.slurm} -J {wildcards.paper_name} \
+            -o {params.output_dir}/vqvae_scan/{wildcards.paper_name}/slurm_%j.log \
+            --wrap="pixi run python scripts/train.py \
+                output_dir={params.output_dir} \
+                project_name=vqvae_scan \
+                network_name={wildcards.paper_name} \
+                model=transformer_vqvae \
+                datamodule=atlas_mappable \
+                datamodule.num_jets=10000000 \
+                {JETSET_LARGE_ARCH} \
+                model.codebook_size={params.codebook_size} \
+                model.codebook_dim={params.codebook_dim} \
+                model.num_quantizers={params.num_quantizers} \
+                model.learning_rate=0.0003 \
+                model.optimizer.lr=0.0003 \
+                +model.commitment_weight=1.0 \
+                trainer.max_epochs=200 \
+                trainer.check_val_every_n_epoch=1 \
+                trainer.val_check_interval=1.0 \
+                trainer.limit_val_batches=1.0 \
+                +trainer.num_sanity_val_steps=0 \
+                trainer.gradient_clip_val=1.0 \
+                trainer.enable_progress_bar=false \
+                callbacks=encode \
+                callbacks.reconstruction_monitor.log_every_n_epochs=5 \
+                +callbacks.reconstruction_monitor.max_batches=100 \
+                datamodule.transforms.preprocess.jet_fn.filename='{JETSET_JET_FN}' \
+                datamodule.transforms.preprocess.cst_fn.filename='{JETSET_CST_FN}'"
+        """
