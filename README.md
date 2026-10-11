@@ -9,10 +9,22 @@ Code for the paper *Precision Tokenization for Multi-Modal Data in High Energy P
 
 ## Setup
 
+This repo uses [pixi](https://pixi.sh) for reproducible environments. Install it if you don't have it (`curl -fsSL https://pixi.sh/install.sh | bash`), then:
+
+**Disk space:** the environment takes about 7 GB and the two JetSet files about 17 GB. On clusters with small home quotas, clone onto scratch.
+
 ```bash
 pixi install                  # after installing pixi. 
 export WANDB_MODE=disabled    # training logs to Weights & Biases otherwise
 ```
+
+`pixi.lock` pins every package. If `pixi install` stops with a hash mismatch, a channel has re-uploaded that
+package: run `pixi update <package>` (only that package is re-locked), then `pixi install` again.
+
+```bash
+export PATH=$PWD/.pixi/envs/default/bin:$PATH
+```
+
 A full training will require a GPU. Evaluation and plotting can run on CPU, but slowly (a JetSet test takes a few hours on CPU) and a GPU is preferred.
 
 Download the JetSet files from the [record page](https://opendata.cern.ch/record/93940) or with the CERN Open Data client:
@@ -21,12 +33,12 @@ Download the JetSet files from the [record page](https://opendata.cern.ch/record
 - `mc-flavtag-ttbar-small.h5` is used to fit the scalers and to test.
 - The classifiers (Fig. 6, Table 2) use all three files, including the 85 GB `mc-flavtag-ttbar-large.h5`.
 
-Download the data like this or with a simple `wget`:
+Download the data with a simple `wget` (or use `cernopendata-client` if you have it):
 ```bash
-pip install cernopendata-client
-cernopendata-client download-files --recid 93940 --filter-name mc-flavtag-ttbar-medium.h5
-cernopendata-client download-files --recid 93940 --filter-name mc-flavtag-ttbar-small.h5
+wget -P 93940 https://opendata.cern.ch/record/93940/files/mc-flavtag-ttbar-medium.h5
+wget -P 93940 https://opendata.cern.ch/record/93940/files/mc-flavtag-ttbar-small.h5
 ```
+The files land in `./93940/` (as with `cernopendata-client`), so use `data_dir=$PWD/93940` below.
 
 ## Reproducing the JetSet scan
 
@@ -52,12 +64,25 @@ Details:
   - Up to 200 epochs, with early stopping after 20 epochs without improvement in the validation loss.
 - **Expected result:** with K = 32768, d = 8, Q = 4 the jet pT resolution comes out at about 0.8% (Table 1; the
   other modalities are listed there too).
-- **Compute:** training one JetSet tokenizer on 7M jets takes about 60 A100-hours with the Large Transformer and
-  about 50 with the Medium one, i.e. two to three days on one GPU. The default grid (35 tokenizers) is about
-  2,000 A100-hours. On 0.7M jets (Table C.4) one Large tokenizer takes about 20 A100-hours.
+- **Training speed:** on one A100 with 0.7M training jets, an epoch takes about 1.6, 2.2 and 4.7 minutes for K = 1024, 8192 and 32768. A full 200-epoch run therefore takes roughly 5–16 GPU-hours. 
 - **Default grid:** the paper's, K ∈ {1024, 8192, 16384, 32768}, d ∈ {2, 4, 8, 16}, Q ∈ {3, 4}, plus additional scan Q ∈ {2, 6, 8} at (K, d) = (32768, 8).
-- **Changing the grid:** the configuration is at the top of the file. Change the grid with
-  `--config 'grid={"K": [...], "d": [...], "Q": [...]}'`, filling in the desired K, d, Q values.  A commented tiny grid there is a quick first pass.
+- **Changing the grid:** the configuration is at the top of the file. The simplest way is a YAML file passed with
+  `--configfile`. Set `extra_points: []` unless you also want the Q ∈ {2, 6, 8} runs at (32768, 8):
+```yaml
+# my_grid.yaml
+grid: {K: [1024, 8192, 32768], d: [8], Q: [3, 4]}
+extra_points: []
+```
+
+```bash
+pixi run snakemake -s workflow/Snakefile_simple --cores 8 \
+  --configfile my_grid.yaml --config data_dir=$PWD/93940 out_dir=results/simple
+```
+
+  The same works on the command line, `--config 'grid={"K": [...], "d": [...], "Q": [...]}' 'extra_points=[]'`.
+  Snakemake passes these list entries as strings; the Snakefile converts them to integers. A commented tiny grid
+  at the top of the file is a quick first pass.
+
 - **Running on a cluster:** the rules contain no job submission, so the same file runs locally, with a SLURM executor plugin, or with your Snakemake profile (`--profile ...`).
 
 Small complication: testing uses "nofp": PyTorch's fused-attention fast path (fp) is off and matmuls run in fp32. The JetSet, track and topocluster tokenizer numbers in the paper use it (Table 1, Figs. 1, 4, E.10, Table C.4, and the Transformer entries of Fig. C.8).
@@ -65,6 +90,7 @@ This doesn't affect MLPs.
 
 ## Breaking it down further into single steps
 
+# Running preprocessing
 ```bash
 # Scalers: resources/cst_quantiles.joblib (track features) and resources/jet_quantiles.joblib (jet features)
 pixi run python scripts/get_preprocessing.py --file_path mc-flavtag-ttbar-small.h5 --num_jets 1000000 \

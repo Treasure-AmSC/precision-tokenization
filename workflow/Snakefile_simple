@@ -19,6 +19,9 @@ TEST_FILE = DATA_DIR / "mc-flavtag-ttbar-small.h5"  # scalers, test, utilization
 
 GRID = config.get("grid", {"K": [1024, 8192, 16384, 32768], "d": [2, 4, 8, 16], "Q": [3, 4]})
 EXTRA = config.get("extra_points", [[32768, 8, 2], [32768, 8, 6], [32768, 8, 8]])  # (K, d, Q), Fig. 4a
+# --config passes list entries as strings
+GRID = {k: [int(v) for v in GRID[k]] for k in ("K", "d", "Q")}
+EXTRA = [[int(v) for v in p] for p in EXTRA]
 TRAIN_JETS = config.get("train_jets", 10_000_000)  # loaded, then split 70/15/15
 MAX_EPOCHS = config.get("max_epochs", 200)
 TEST_BATCHES = config.get("test_batches", 100)  # x 1024 jets
