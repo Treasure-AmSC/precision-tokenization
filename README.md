@@ -220,4 +220,4 @@ jet-pT regression.
 
 ## License
 
-To be added.
+MIT — see [LICENSE](LICENSE).

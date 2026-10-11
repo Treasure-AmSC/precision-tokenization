@@ -243,10 +243,6 @@ class ReconstructionMonitor(Callback):
         # Jet-level metrics (pt-based only, since coordinates are relative)
         if self.compute_jet_metrics:
             # Compute jets from original and reconstructed constituents
-
-            # ToDo: decide whether to get the truth jets from the jet array, or to compute
-            # them from unscaled constituents.
-            # the latter might assume less about the reconstruction?
             """
             jet_truth = {
                 "pt": original_unscaled["jets"][:, self.jet_pt_idx].cpu().numpy(),
