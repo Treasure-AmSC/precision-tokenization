@@ -2,6 +2,7 @@
 
 Code for the paper *Precision Tokenization for Multi-Modal Data in High Energy Physics* ([arXiv:2610.13876](https://arxiv.org/abs/2610.13876)),
 by Jeffrey Krupa, Samuel Klein, Nilotpal Kakati, Daniel Murnane, Baran Hashemi, Eilam Gross, Lukas Heinrich and Michael Kagan.
+Code contributors: Jeffrey Krupa, Samuel Klein and Michael Kagan.
 *Important: this is a frozen release. For new work, use the maintained [heptokens library](https://github.com/treasure-AmSC/heptokens).*
 
 - **JetSet** is public: [doi:10.7483/OPENDATA.ATLAS.QG8W.TO8P](https://doi.org/10.7483/OPENDATA.ATLAS.QG8W.TO8P).
