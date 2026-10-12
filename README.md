@@ -1,6 +1,7 @@
 # Precision Tokenization for Multi-Modal Data in High Energy Physics
 
-Code for the paper *Precision Tokenization for Multi-Modal Data in High Energy Physics* (arXiv:XXXX.XXXXX).
+Code for the paper *Precision Tokenization for Multi-Modal Data in High Energy Physics* ([arXiv:2610.13876](https://arxiv.org/abs/2610.13876)),
+by Jeffrey Krupa, Samuel Klein, Nilotpal Kakati, Daniel Murnane, Baran Hashemi, Eilam Gross, Lukas Heinrich and Michael Kagan.
 *Important: this is a frozen release. For new work, use the maintained [heptokens library](https://github.com/treasure-AmSC/heptokens).*
 
 - **JetSet** is public: [doi:10.7483/OPENDATA.ATLAS.QG8W.TO8P](https://doi.org/10.7483/OPENDATA.ATLAS.QG8W.TO8P).
@@ -210,11 +211,14 @@ jet-pT regression.
 ## Citation
 
 ```bibtex
-@article{precision_tokenization,
-  title  = {Precision Tokenization for Multi-Modal Data in High Energy Physics},
-  author = {Krupa, J. and Klein, S. and Kakati, N. and Murnane, D. and Hashemi, B. and Gross, E. and Heinrich, L. and Kagan, M.},
-  eprint = {XXXX.XXXXX},
+@misc{krupa2026precisiontokenization,
+  title         = {Precision Tokenization for Multi-Modal Data in High Energy Physics},
+  author        = {Jeffrey Krupa and Samuel Klein and Nilotpal Kakati and Daniel Murnane and Baran Hashemi and Eilam Gross and Lukas Heinrich and Michael Kagan},
+  year          = {2026},
+  eprint        = {2610.13876},
   archivePrefix = {arXiv},
+  primaryClass  = {hep-ph},
+  url           = {https://arxiv.org/abs/2610.13876},
 }
 ```
 
