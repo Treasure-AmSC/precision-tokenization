@@ -140,6 +140,7 @@ import matplotlib.pyplot as plt
 
 from heptokens.vendored import b_module_names
 from heptokens.vendored.models.coders import Decoder, Encoder
+from heptokens.vendored.models.latent_bins import LatentBins
 from heptokens.vendored.models.transformer import Transformer
 from heptokens.vendored.cocoa.callbacks.cell_recon import _layer_geometry, _N_LAYERS
 from heptokens.vendored.cocoa.data.hep4m_cell import CellDataModule
@@ -221,19 +222,25 @@ def build_model(ckpt_path: str):
     the coder architecture itself: the default per-patch MLP (CoderModel,
     hep4m_cell_vqvae.yaml) or a self-attention Transformer over all patches
     (hep4m_cell_transformer_vqvae.yaml) -- detected from which keys are
-    present in encoder.coder.*.
+    present in encoder.coder.*. LatentBins (no parameters) comes from the
+    checkpoint's latent_bins hyperparameters instead of the ResidualVQ.
     """
     with b_module_names():
-        sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)["state_dict"]
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    sd = ckpt["state_dict"]
+    latent_bins = ckpt.get("hyper_parameters", {}).get("latent_bins")
     is_transformer = "encoder.coder.input_proj.weight" in sd
 
     codebook_dim = (
         sd["encoder.coder.output_proj.weight"].shape[0] if is_transformer else sd["encoder.coder.model.9.weight"].shape[0]
     )
-    codebook_size = sd["vector_quantization.layers.0.embed"].shape[-1]
-    num_quantizers = sum(
-        1 for k in sd if k.endswith(".embed") and "vector_quantization.layers." in k
-    )
+    if latent_bins is not None:
+        codebook_size, num_quantizers = latent_bins["num_bins"], codebook_dim
+    else:
+        codebook_size = sd["vector_quantization.layers.0.embed"].shape[-1]
+        num_quantizers = sum(
+            1 for k in sd if k.endswith(".embed") and "vector_quantization.layers." in k
+        )
 
     if is_transformer:
         encoder = _build_transformer_coder("encoder", sd, input_dim=128, output_dim=codebook_dim, coder_cls=Encoder)
@@ -247,6 +254,9 @@ def build_model(ckpt_path: str):
         decoder.load_state_dict({k[len("decoder.") :]: v for k, v in sd.items() if k.startswith("decoder.")})
         decoder.eval()
 
+    if latent_bins is not None:
+        vq = LatentBins(dim=codebook_dim, **latent_bins).eval()
+        return encoder, vq, decoder, codebook_dim, codebook_size, num_quantizers
     vq = ResidualVQ(dim=codebook_dim, codebook_size=codebook_size, num_quantizers=num_quantizers, commitment=1.0)
     vq.load_state_dict(
         {k[len("vector_quantization.") :]: v for k, v in sd.items() if k.startswith("vector_quantization.")},
