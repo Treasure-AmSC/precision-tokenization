@@ -1,0 +1,16 @@
+---
+# configs/model/hep4m_cell_transformer_masked_posenc_warmup_large_bins.yaml
+# hep4m_cell_transformer_masked_posenc_warmup_large_vqvae.yaml with latent binning
+# (models/latent_bins.py) in place of the ResidualVQ: codebook_dim tokens of num_bins values.
+defaults:
+  - hep4m_cell_transformer_masked_posenc_warmup_large_vqvae
+  - _self_
+codebook_size:
+num_quantizers:
+codebook_dim: 16
+latent_bins:
+  num_bins: 4096
+  bin_range: 4.0
+  # ~1/sqrt(12): the std of the rounding error (uniform over a bin), so the decoder
+  # trains on perturbations the size of those the binning makes at evaluation
+  noise_std_bins: 0.29

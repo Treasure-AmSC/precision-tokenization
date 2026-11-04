@@ -8,6 +8,7 @@ import torch
 from lightning import LightningModule
 
 from heptokens.vendored.models.coders import Decoder, Encoder
+from heptokens.vendored.models.latent_bins import LatentBins
 from heptokens.vendored.models.utils import ScheduledOptimiserMixin, compute_codebook_utilization
 from heptokens.vendored.models.vq_layers import RevivingResidualVQ
 
@@ -28,6 +29,9 @@ class LitVqVae(ScheduledOptimiserMixin, LightningModule):
         reconstruction_weight: Weight for reconstruction loss
         data_sample: Sample data for initialization (optional, for compatibility)
         n_classes: Number of classes (optional, for compatibility)
+        latent_bins: LatentBins arguments (num_bins, bin_range, noise_std_bins) to bin the
+            codebook_dim latent dimensions instead of the ResidualVQ; codebook_size and
+            num_quantizers must then be None
         **kwargs: Additional arguments passed to ResidualVQ
     """
 
@@ -35,9 +39,9 @@ class LitVqVae(ScheduledOptimiserMixin, LightningModule):
         self,
         encoder: Encoder,
         decoder: Decoder,
-        codebook_size: int = 1024,
+        codebook_size: int | None = 1024,
         codebook_dim: int = 256,
-        num_quantizers: int = 8,
+        num_quantizers: int | None = 8,
         commitment_weight: float = 1.0,
         learning_rate: float = 1e-3,
         reconstruction_weight: float = 1.0,
@@ -47,6 +51,7 @@ class LitVqVae(ScheduledOptimiserMixin, LightningModule):
         mask_key: str | None = "mask",
         data_sample: torch.Tensor | dict = None,
         threshold_ema_dead_code: float = 0.0,
+        latent_bins: Mapping | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -72,18 +77,25 @@ class LitVqVae(ScheduledOptimiserMixin, LightningModule):
         # Declare decoder
         self.decoder = decoder(input_dim=codebook_dim, output_dim=input_dim, data_sample=data_sample)
 
-        # Vector quantization. Uses RevivingResidualVQ (dead-code revival on
-        # top of the vendored vector_quantize_pytorch, which otherwise has no
-        # protection against codebook collapse) -- disabled by default
-        # (threshold_ema_dead_code=0) to exactly preserve prior behavior;
-        # pass threshold_ema_dead_code>0 (e.g. 1.0) to opt in.
-        self.vector_quantization = RevivingResidualVQ(
-            dim=codebook_dim,
-            codebook_size=codebook_size,
-            num_quantizers=num_quantizers,
-            commitment=commitment_weight,
-            threshold_ema_dead_code=threshold_ema_dead_code,
-        )
+        if latent_bins is not None:
+            assert codebook_size is None and num_quantizers is None, (
+                "latent_bins replaces the RVQ: leave codebook_size and num_quantizers unset"
+            )
+            self.vector_quantization = LatentBins(dim=codebook_dim, **latent_bins)
+            self.codebook_size = self.vector_quantization.num_bins
+        else:
+            # Vector quantization. Uses RevivingResidualVQ (dead-code revival on
+            # top of the vendored vector_quantize_pytorch, which otherwise has no
+            # protection against codebook collapse) -- disabled by default
+            # (threshold_ema_dead_code=0) to exactly preserve prior behavior;
+            # pass threshold_ema_dead_code>0 (e.g. 1.0) to opt in.
+            self.vector_quantization = RevivingResidualVQ(
+                dim=codebook_dim,
+                codebook_size=codebook_size,
+                num_quantizers=num_quantizers,
+                commitment=commitment_weight,
+                threshold_ema_dead_code=threshold_ema_dead_code,
+            )
 
     def encode(
         self, batch: Dict[str, torch.Tensor]
@@ -131,6 +143,8 @@ class LitVqVae(ScheduledOptimiserMixin, LightningModule):
         Returns:
             indices: [batch_size, n_csts, num_quantizers]
         """
+        if isinstance(self.vector_quantization, LatentBins):
+            return self.encode(batch)[1]  # no codebook search to skip
         z_e = self.encoder(batch)  # [batch_size, n_csts, codebook_dim]
         flat = z_e.reshape(-1, z_e.shape[-1])  # [N, dim]
 
